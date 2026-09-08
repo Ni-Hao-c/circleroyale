@@ -253,7 +253,7 @@ public sealed class BotBrain : Component
 		var aimPoint = new Vector2( _self.WorldPosition.x + away.x * 2048f,
 			_self.WorldPosition.y + away.y * 2048f );
 		CircleroyaleGame.Current?.DoSplit( _self, aimPoint );
-		Log.Info( $"[bot] split-escape '{_self.PlayerName}' <- '{ctx.Threat.PlayerName}'" );
+		GameLog.Info( $"[bot] split-escape '{_self.PlayerName}' <- '{ctx.Threat.PlayerName}'" );
 	}
 
 	/// <summary>
@@ -274,7 +274,7 @@ public sealed class BotBrain : Component
 
 		_sinceSplit = 0;
 		CircleroyaleGame.Current?.DoSplit( _self, new Vector2( ctx.Prey.WorldPosition.x, ctx.Prey.WorldPosition.y ) );
-		Log.Info( $"[bot] split-hunt '{_self.PlayerName}' -> '{ctx.Prey.PlayerName}'" );
+		GameLog.Info( $"[bot] split-hunt '{_self.PlayerName}' -> '{ctx.Prey.PlayerName}'" );
 	}
 
 	/// <summary>

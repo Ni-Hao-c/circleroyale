@@ -14,6 +14,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	EndBoard _endBoard;
 	LobbyPanel _lobby;
 	RoomBrowser _browser;
+	SettingsPanel _settings;
 	FoodManager _food;
 	PowerUpManager _power;
 	NetworkManager _net;
@@ -156,7 +157,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		{
 			if ( Networking.IsActive && !Networking.IsHost )
 			{
-				Log.Info( "[menu] join: connected as client, entering room" );
+				GameLog.Info( "[menu] join: connected as client, entering room" );
 				_joinRequested = false;
 				EnterClientWaiting();
 				_menu?.Hide();
@@ -227,7 +228,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		// 客户端自己回等待页；单机（无会话）回主菜单。结算期不受理（EndBoard 自动返回在管）
 		if ( _gameStarted && !MatchState.MatchOver && Input.Keyboard.Pressed( "P" ) )
 		{
-			Log.Info( "[match] quit to lobby via P" );
+			GameLog.Info( "[match] quit to lobby via P" );
 			if ( Networking.IsActive && NetworkManager.IsAuthority )
 				NetworkManager.MatchCancelled();
 			AfterSettlement();
@@ -305,7 +306,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			}
 			catch ( Exception e )
 			{
-				Log.Info( $"[net] RequestFoodFull failed (session not ready): {e.Message}" );
+				GameLog.Info( $"[net] RequestFoodFull failed (session not ready): {e.Message}" );
 			}
 		}
 
@@ -380,12 +381,12 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 				// 主球被吃时最大的分身升级成新主球，全部身体死光才算死
 				if ( TryPromoteFromPieces( smaller ) )
 				{
-					Log.Info( $"[game] body lost: {smaller.PlayerName} <- {bigger.PlayerName} (promoted)" );
+					GameLog.Info( $"[game] body lost: {smaller.PlayerName} <- {bigger.PlayerName} (promoted)" );
 					continue;
 				}
 
 				smaller.MarkDead();
-				Log.Info( "[game] eaten: " + smaller.PlayerName + " <- " + bigger.PlayerName );
+				GameLog.Info( "[game] eaten: " + smaller.PlayerName + " <- " + bigger.PlayerName );
 			}
 		}
 
@@ -538,13 +539,13 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 
 					if ( TryPromoteFromPieces( ball ) )
 					{
-						Log.Info( $"[game] body lost: {ball.PlayerName} <- cell#{c.Id} (promoted)" );
+						GameLog.Info( $"[game] body lost: {ball.PlayerName} <- cell#{c.Id} (promoted)" );
 					}
 					else
 					{
 						ball.MarkDead();
 						if ( !ball.IsBot ) PopPiecesOf( ball.OwnerSteamId );
-						Log.Info( "[game] eaten: " + ball.PlayerName + " <- cell#" + c.Id );
+						GameLog.Info( "[game] eaten: " + ball.PlayerName + " <- cell#" + c.Id );
 					}
 					break;
 				}
@@ -614,7 +615,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		if ( !_gameStarted || MatchState.MatchOver ) return;
 		if ( !LocalBall.IsValid() || LocalBall.Alive ) return;
 
-		Log.Info( "[game] local respawn requested" );
+		GameLog.Info( "[game] local respawn requested" );
 		if ( NetworkManager.IsAuthority )
 		{
 			RespawnBall( LocalBall );
@@ -638,7 +639,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		if ( ball.IsBot || ball.OwnerSteamId == Game.SteamId.Value )
 			ball.WorldPosition = RandomSpawnPos();
 
-		Log.Info( $"[net] respawned '{ball.PlayerName}'" );
+		GameLog.Info( $"[net] respawned '{ball.PlayerName}'" );
 
 		if ( cue ) CueRespawn( ball.OwnerSteamId, ball.TeamIndex );
 	}
@@ -699,7 +700,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		if ( _menuDemo )
 		{
 			MatchState.ActivateForMatch();   // 演示赛循环重开（无连接，RPC 空发无害）
-			Log.Info( "[menu] demo match restarted" );
+			GameLog.Info( "[menu] demo match restarted" );
 			return;
 		}
 
@@ -722,7 +723,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		NetworkManager.MatchOver( arr );   // 客户端展示用
 		OnMatchOverRemote( arr );          // host 立即落地（广播回声被 MatchOver 守卫挡掉）
 
-		Log.Info( $"[match] over — {arr.Length} players, winner: {( arr.Length > 0 ? arr[0].Name : "?" )}" );
+		GameLog.Info( $"[match] over — {arr.Length} players, winner: {( arr.Length > 0 ? arr[0].Name : "?" )}" );
 	}
 
 	/// <summary> 比赛结束落地（全端）：冻结 + 结算面板；本机成绩上云、本地榜落盘（各端各自做）。
@@ -740,7 +741,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		LocalBoard.Record( standings );
 		ScoreUploader.SubmitOwn( standings, this );
 		GameAchievements.Settlement( standings, local.IsValid() ? local.OwnerSteamId : 0 );   // 成就：夺冠/登顶（v0.7.8.13）
-		Log.Info( $"[match] settlement shown ({standings?.Length ?? 0} rows)" );
+		GameLog.Info( $"[match] settlement shown ({standings?.Length ?? 0} rows)" );
 	}
 
 	/// <summary> 吞球通知（host）：广播客户端 + 本机播报/音效 </summary>
@@ -841,7 +842,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			if ( NetworkManager.IsAuthority && b.IsBot && b.OwnerSteamId < GameConfig.BotSteamIdBase )
 			{
 				b.OwnerSteamId = NextBotSteamId();
-				Log.Info( $"[game] legacy bot '{b.PlayerName}' assigned steam id {b.OwnerSteamId}" );
+				GameLog.Info( $"[game] legacy bot '{b.PlayerName}' assigned steam id {b.OwnerSteamId}" );
 			}
 
 			if ( !_balls.Contains( b ) )
@@ -1092,7 +1093,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			_cellsDirty = true;
 		}
 
-		Log.Info( $"[game] split-all '{ball.PlayerName}'" );
+		GameLog.Info( $"[game] split-all '{ball.PlayerName}'" );
 	}
 
 	/// <summary> 生成一个分裂分身（调用方已扣主球质量）。
@@ -1140,7 +1141,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		}
 
 		SpawnPopFx( ball );
-		Log.Info( $"[game] burst on spike: '{ball.PlayerName}' into {n} pieces" );
+		GameLog.Info( $"[game] burst on spike: '{ball.PlayerName}' into {n} pieces" );
 		return true;
 	}
 
@@ -1228,13 +1229,13 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 
 					if ( TryPromoteFromPieces( b ) )
 					{
-						Log.Info( $"[game] body lost to spike: {b.PlayerName} (promoted)" );
+						GameLog.Info( $"[game] body lost to spike: {b.PlayerName} (promoted)" );
 					}
 					else
 					{
 						b.MarkDead();
 						if ( !b.IsBot ) PopPiecesOf( b.OwnerSteamId );
-						Log.Info( "[game] eaten by spike: " + b.PlayerName );
+						GameLog.Info( "[game] eaten by spike: " + b.PlayerName );
 					}
 				}
 				break;
@@ -1342,7 +1343,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 					{
 						owner.ApplyBuff( (byte)PowerUpManager.Kind.Shield, GameConfig.SpikeMinionRewardSeconds );
 						GameAchievements.SpikeMinionBlast( minion.OwnerSteamId );   // 成就：以小博大（v0.7.8.13）
-						Log.Info( $"[game] spike minion burst '{b.PlayerName}' -> '{owner.PlayerName}' invincible {GameConfig.SpikeMinionRewardSeconds}s" );
+						GameLog.Info( $"[game] spike minion burst '{b.PlayerName}' -> '{owner.PlayerName}' invincible {GameConfig.SpikeMinionRewardSeconds}s" );
 					}
 
 					NeonRenderer.Pop( minion.Pos, minion.ColorIndex, minion.Radius * 3f );
@@ -1358,7 +1359,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 						b.MarkDead();
 						if ( !b.IsBot ) PopPiecesOf( b.OwnerSteamId );
 					}
-					Log.Info( $"[game] eaten by spike minion: {b.PlayerName}" );
+					GameLog.Info( $"[game] eaten by spike minion: {b.PlayerName}" );
 				}
 				break;
 			}
@@ -1431,7 +1432,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			_spikes[i] = RandomSpikePos();
 		}
 		if ( Networking.IsActive ) NetworkManager.SpikesFull( _spikes );   // 无会话（菜单演示赛）不广播
-		Log.Info( $"[game] spikes generated: {_spikes.Length}" );
+		GameLog.Info( $"[game] spikes generated: {_spikes.Length}" );
 	}
 
 	/// <summary>
@@ -1668,7 +1669,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		_cellsDirty = true;
 
 		NeonRenderer.Puff( c.Pos, ball.ColorIndex );
-		Log.Info( $"[game] spike minion spawned for '{ball.PlayerName}' (mass {mass:0})" );
+		GameLog.Info( $"[game] spike minion spawned for '{ball.PlayerName}' (mass {mass:0})" );
 	}
 
 	/// <summary>
@@ -1714,7 +1715,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			}
 		}
 
-		Log.Info( $"[game] promoted piece -> main: {ball.PlayerName} mass={mass:0}" );
+		GameLog.Info( $"[game] promoted piece -> main: {ball.PlayerName} mass={mass:0}" );
 		return true;
 	}
 
@@ -1867,6 +1868,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		// 终态保证（v0.6.8.2）：无会话且不在任何流程 → **主菜单必须可见**。
 		// 之前只 Hide 房间不亮菜单——任何路径漏掉 Show（热重载重建、异常中断）就是全空屏
 		if ( _browser.IsValid() && _browser.IsOpen ) return;   // 房间列表页开着：主菜单让位
+		if ( _settings.IsValid() && _settings.IsOpen ) return;   // 设置页开着：主菜单让位（v0.7.8.16）
 		if ( _menu.IsValid() && !_menu.GameObject.Enabled ) _menu.Show();
 	}
 
@@ -1927,6 +1929,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		CreateMenu();
 		CreateLobbyPanel();
 		CreateRoomBrowser();
+		CreateSettingsPanel();
 
 		// 食物管理与联机管理：**每台机器一份本地实例，自身不联网**。
 		// 食物状态经静态 RPC 同步（FoodFull 定向全量 / FoodEaten / FoodRespawned 广播增量）；
@@ -1965,7 +1968,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			case 0:   // HOST：本机当房主（建公开大厅，别人可加入）→ 进房间
 				StopMenuDemo();
 				OpenHostLobby();
-				Log.Info( "[menu] host game (room)" );
+				GameLog.Info( "[menu] host game (room)" );
 				_net.RunHostFlow();
 				break;
 
@@ -1978,7 +1981,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			case 2:   // VS BOTS：人机对战（不建大厅，离线房间，一样调参后 START）
 				StopMenuDemo();
 				OpenHostLobby();
-				Log.Info( "[menu] vs bots (offline room)" );
+				GameLog.Info( "[menu] vs bots (offline room)" );
 				_net.RunHostFlow( createLobby: false );
 				break;
 
@@ -1987,6 +1990,11 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 					_menu?.SetStatus( "QUIT IS STANDALONE-ONLY (THIS IS THE EDITOR)" );
 				else
 					Game.Close();
+				break;
+
+			case 4:   // SETTINGS：设置页（泛光开关/音乐音量；BACK 回菜单）
+				_menu?.Hide();
+				_settings?.Show();
 				break;
 		}
 	}
@@ -2011,7 +2019,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		{
 			SpawnBall( RandomSpawnPos(), isBot: true, owner: null );
 		}
-		Log.Info( $"[menu] demo bots started ({target})" );
+		GameLog.Info( $"[menu] demo bots started ({target})" );
 	}
 
 	/// <summary> 收演示赛：清 bot/分身，重置初始化标记（真实开局的 OnLobbyOpened 会重新投食） </summary>
@@ -2031,7 +2039,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		_sinceEject.Clear();
 		_power?.Reset();
 		_networkReady = false;
-		Log.Info( "[menu] demo stopped" );
+		GameLog.Info( "[menu] demo stopped" );
 	}
 
 	/// <summary> host 开房：藏菜单、亮房间界面（蛰伏球由 OnLobbyOpened 在会话就绪后生成） </summary>
@@ -2098,7 +2106,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			if ( !go.Enabled )
 			{
 				go.Enabled = true;
-				Log.Info( "[game] snapshot world root enabled" );
+				GameLog.Info( "[game] snapshot world root enabled" );
 			}
 
 			foreach ( var child in go.Children.ToArray() )
@@ -2111,7 +2119,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 				{
 					var name = child.Name;
 					child.Destroy();
-					Log.Info( $"[game] stripped snapshot '{name}'" );
+					GameLog.Info( $"[game] stripped snapshot '{name}'" );
 				}
 			}
 		}
@@ -2128,7 +2136,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		if ( _networkReady ) return;
 		_networkReady = true;
 
-		Log.Info( $"[game] CircleRoyale {GameConfig.Version} lobby opened auth={NetworkManager.IsAuthority}" );
+		GameLog.Info( $"[game] CircleRoyale {GameConfig.Version} lobby opened auth={NetworkManager.IsAuthority}" );
 		if ( !NetworkManager.IsAuthority ) return;
 
 		// 房间设置：convar 覆写默认值（arena 经 Replicated 同步给客户端）
@@ -2207,7 +2215,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		if ( Networking.IsActive ) NetworkManager.MatchStarted();   // 无会话不广播
 		OnMatchStartedLocal();
 
-		Log.Info( $"[match] started — mode={MatchState.CurrentMode} target={MatchState.PlayerTarget} remotes={remotes} bots={bots}" );
+		GameLog.Info( $"[match] started — mode={MatchState.CurrentMode} target={MatchState.PlayerTarget} remotes={remotes} bots={bots}" );
 	}
 
 	/// <summary> 团队赛按块分队（v0.6.5.0 修 bug：原 %TeamSize 轮转=只有 TeamSize 个队、每队十几人；
@@ -2235,7 +2243,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	public void OnMatchStartedRemote()
 	{
 		if ( NetworkManager.IsAuthority ) return;
-		Log.Info( "[match] host started the game" );
+		GameLog.Info( "[match] host started the game" );
 
 		// 用户定稿（v0.6.4.1）：在房间里的客户端**不自动进局**——房间页亮起 JOIN GAME 按钮，
 		// 由玩家点击后走 3 秒加入倒计时再进入；不在房间（异常态）则直接进
@@ -2252,7 +2260,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	public void OnMatchCancelledRemote()
 	{
 		if ( NetworkManager.IsAuthority ) return;   // host 自己已直接处理
-		Log.Info( "[match] host cancelled the match — back to lobby" );
+		GameLog.Info( "[match] host cancelled the match — back to lobby" );
 		ResetToLobby();
 	}
 
@@ -2264,7 +2272,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 
 		_joinCountdown = GameConfig.JoinCountdownSeconds;
 		_lobby?.ShowJoinCountdown( GameConfig.JoinCountdownSeconds );
-		Log.Info( "[match] client joining via button" );
+		GameLog.Info( "[match] client joining via button" );
 	}
 
 	/// <summary> 自动重连 watchdog 发起重连（NetworkManager 调用）：重新走标准加入流 </summary>
@@ -2298,6 +2306,13 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	public void CloseBrowser()
 	{
 		_browser?.Hide();
+		_menu?.Show();
+	}
+
+	/// <summary> 设置页收起（SettingsPanel BACK 调用）：回主菜单 </summary>
+	public void CloseSettings()
+	{
+		_settings?.Hide();
 		_menu?.Show();
 	}
 
@@ -2377,7 +2392,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		if ( !ball.IsValid() ) return;
 
 		ball.TeleportTo( new Vector3( x, y, 0f ) );
-		Log.Info( $"[game] main promoted -> continue at ({x:0},{y:0})" );
+		GameLog.Info( $"[game] main promoted -> continue at ({x:0},{y:0})" );
 	}
 
 	/// <summary> 静态 RPC 落地：为重连/复活的连接原地复活其球（按 OwnerSteamId 匹配） </summary>
@@ -2394,7 +2409,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 				return;
 			}
 		}
-		Log.Info( $"[net] respawn request: no dead ball for '{conn.DisplayName}'" );
+		GameLog.Info( $"[net] respawn request: no dead ball for '{conn.DisplayName}'" );
 	}
 
 	// ---- 食物远端事件应用（仅客户端；host 的广播回声用 IsAuthority 挡掉）----
@@ -2426,7 +2441,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	{
 		if ( NetworkManager.IsAuthority ) return;
 		_food?.ApplyFull( foods );
-		Log.Info( $"[game] food full sync received: {foods.Length}" );
+		GameLog.Info( $"[game] food full sync received: {foods.Length}" );
 	}
 
 	/// <summary> 客户端应用绿刺全量（静态数据，收到即用） </summary>
@@ -2527,7 +2542,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		{
 			if ( c.IsValid() && c.GameObject.IsValid() )
 			{
-				Log.Info( "[game] destroying stale camera" );
+				GameLog.Info( "[game] destroying stale camera" );
 				c.GameObject.Destroy();
 			}
 		}
@@ -2546,8 +2561,8 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 
 		var bloom = go.AddComponent<Bloom>();
 		bloom.Mode = SceneCamera.BloomAccessor.BloomMode.Additive;
-		bloom.Strength = 2.6f;
-		bloom.Threshold = 0.30f;
+		bloom.Strength = 1.5f;      // v0.7.8.15 用户反馈调柔（原 2.6/0.30 头像照片亮部泛光刺眼）
+		bloom.Threshold = 0.55f;    // 抬高阈值：头像普通亮度不再发光，霓虹亮线保留光晕
 
 		var tonemapping = go.AddComponent<Tonemapping>();
 		tonemapping.Mode = Tonemapping.TonemappingMode.ACES;
@@ -2586,6 +2601,15 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		go.Parent = _root;
 		go.AddComponent<ScreenPanel>();
 		_lobby = go.AddComponent<LobbyPanel>();
+	}
+
+	/// <summary> 设置页（v0.7.8.16 二级界面）：主菜单 [4] 进入——泛光开关/音乐音量，BACK 回菜单 </summary>
+	void CreateSettingsPanel()
+	{
+		var go = new GameObject( true, "SettingsPanel" );
+		go.Parent = _root;
+		go.AddComponent<ScreenPanel>();
+		_settings = go.AddComponent<SettingsPanel>();
 	}
 
 	/// <summary> 房间列表页（v0.6.7.0）：主菜单 [2] JOIN GAME 打开，列出 Steam 公开大厅 </summary>
@@ -2781,7 +2805,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		}
 
 		GameMusic.PlayMenu();
-		Log.Info( $"[match] back to lobby (auth={NetworkManager.IsAuthority})" );
+		GameLog.Info( $"[match] back to lobby (auth={NetworkManager.IsAuthority})" );
 	}
 
 	/// <summary>
@@ -2838,7 +2862,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		if ( _hud.IsValid() ) _hud.GameObject.Enabled = false;
 		_menu?.Show();
 		GameMusic.PlayMenu();
-		Log.Info( "[menu] back to menu" );
+		GameLog.Info( "[menu] back to menu" );
 
 		// 菜单背景演示赛重新开起来
 		if ( NetworkManager.IsAuthority && !Networking.IsActive )

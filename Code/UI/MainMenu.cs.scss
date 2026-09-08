@@ -49,7 +49,8 @@ MainMenu {
 	.btn.host { top: 380px; }
 	.btn.join { top: 442px; }
 	.btn.bots { top: 504px; }
-	.btn.quit { top: 566px; color: rgba( 255, 255, 255, 0.4 ); }
+	.btn.settings { top: 566px; }
+	.btn.quit { top: 628px; color: rgba( 255, 255, 255, 0.4 ); }
 
 	.btn:hover {
 		color: #35f0ff;

@@ -413,7 +413,7 @@ public sealed class Ball : Component
 				GameSfx.Respawn( WorldPosition );
 			GameSfx.ResetEatCount();   // 下一条命吃食物音从 0 重新计
 			GameSfx.ResetCombo();      // 连击清零（新的一条命重新起算）
-			Log.Info( $"[ball] local respawn '{PlayerName}'" );
+			GameLog.Info( $"[ball] local respawn '{PlayerName}'" );
 		}
 
 		// 比赛结束：全场冻结（结算面板接管，谁也不许再动）

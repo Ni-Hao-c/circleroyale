@@ -8,7 +8,7 @@ public static class GameConfig
 	// ---- 版本 ----
 
 	/// <summary> 显示版本（HUD 右上角 + 日志；里程碑切换升次版本号，之后每次改代码第 4 段 +1，用于核对两端构建一致性） </summary>
-	public const string Version = "v0.7.8.14-M5";
+	public const string Version = "v0.7.8.18-M5";
 
 	/// <summary> 结算面板自动返回大厅的时长（秒）；空格可提前。多人返回 host 的房间（会话保留），单机回主菜单 </summary>
 	public const float SettlementAutoReturnSeconds = 10f;
@@ -193,6 +193,10 @@ public static class GameConfig
 	/// <summary> 场地半宽，host 设置经 Replicated 自动下发客户端 </summary>
 	[ConVar( "cr_arena_size", ConVarFlags.Replicated, Help = "Arena half size (default 6144). Re-enter Play to apply." )]
 	public static float ConvarArenaSize { get; set; } = DefaultArenaHalfSize;
+
+	/// <summary> 泛光开关（v0.7.8.15）：玩家嫌头像泛光亮可在控制台关掉（cr_bloom 0），本机即时生效 </summary>
+	[ConVar( "cr_bloom", Help = "Bloom glow 1=on (default) 0=off. Applies instantly." )]
+	public static bool ConvarBloom { get; set; } = true;
 
 	/// <summary> 主菜单"加入"的默认地址（local = 本机房主；要连远程改这里） </summary>
 	public const string DefaultJoinAddress = "local";

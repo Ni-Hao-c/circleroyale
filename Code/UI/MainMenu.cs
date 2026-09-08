@@ -4,7 +4,8 @@ using Sandbox.UI;
 /// 主菜单（M4）：建服 / 加入 / 人机对战 / 退出。纯 C# Panel（编辑器热重载友好，同 GameHud 模式）。
 /// 菜单阶段世界"壳"已建好（网格 + 相机照常渲染），菜单半透明压暗盖在上面。
 /// M5：比赛参数设置移进了**游戏房间**（LobbyPanel 二级界面）——HOST/VS BOTS 进房调参，点 START 开局。
-/// 点击 + 键盘快捷键双通道（编辑器内嵌视口可能收不到鼠标点击，键盘保底）：1=建服 2=加入 3=人机 4=退出。
+/// 点击 + 键盘快捷键双通道（编辑器内嵌视口可能收不到鼠标点击，键盘保底）：
+/// 1=建服 2=加入 3=人机 4=设置页 5(数字键)=退出。
 /// 样式在同目录 MainMenu.cs.scss（按"类名.cs.scss"自动加载）。
 /// </summary>
 public sealed class MainMenu : PanelComponent
@@ -39,7 +40,8 @@ public sealed class MainMenu : PanelComponent
 		AddButton( root, "HOST GAME  —  [1]", "host" );
 		AddButton( root, "JOIN GAME  —  [2]", "join" );
 		AddButton( root, "VS BOTS    —  [3]", "bots" );
-		AddButton( root, "QUIT       —  [4]", "quit" );
+		AddButton( root, "SETTINGS  —  [4]", "settings" );
+		AddButton( root, "QUIT       —  [5]", "quit" );
 
 		_status = new Label() { Classes = "status" };
 		root.AddChild( _status );
@@ -67,7 +69,7 @@ public sealed class MainMenu : PanelComponent
 
 	/// <summary> 菜单按钮点击（实例方法：热重载可重映射） </summary>
 	void OnMenuButton( string id ) =>
-		CircleroyaleGame.Current?.MenuAction( id switch { "host" => 0, "join" => 1, "bots" => 2, _ => 3 } );
+		CircleroyaleGame.Current?.MenuAction( id switch { "host" => 0, "join" => 1, "bots" => 2, "settings" => 4, _ => 3 } );
 
 	protected override void OnUpdate()
 	{
@@ -79,11 +81,13 @@ public sealed class MainMenu : PanelComponent
 
 		BuildUi();
 
-		// 键盘保底（编辑器内嵌视口鼠标事件不可靠，键盘一定能进来）
+		// 键盘保底（编辑器内嵌视口鼠标事件不可靠，键盘一定能进来）：
+		// [4] 设置页 / 数字 5 退出（Slot5 未在 Input 配置里，按键直读兜底）
 		if ( Input.Pressed( "Slot1" ) ) CircleroyaleGame.Current?.MenuAction( 0 );
 		if ( Input.Pressed( "Slot2" ) ) CircleroyaleGame.Current?.MenuAction( 1 );
 		if ( Input.Pressed( "Slot3" ) ) CircleroyaleGame.Current?.MenuAction( 2 );
-		if ( Input.Pressed( "Slot4" ) ) CircleroyaleGame.Current?.MenuAction( 3 );
+		if ( Input.Pressed( "Slot4" ) ) CircleroyaleGame.Current?.MenuAction( 4 );
+		if ( Input.Keyboard.Pressed( "5" ) ) CircleroyaleGame.Current?.MenuAction( 3 );
 	}
 
 	/// <summary> 状态行（连接中 / 失败重试提示） </summary>

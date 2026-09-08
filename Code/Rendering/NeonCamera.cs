@@ -16,6 +16,7 @@ public sealed class NeonCamera : Component
 	Ball _spectate;      // 死亡观战目标（本地球活着时恒为 null）
 	Vector3 _focus;
 	float _shakeAmp;     // 屏幕震动幅度（击杀/放技能触发，指数衰减，v0.7.7.0）
+	Bloom _bloom;        // 泛光组件（cr_bloom convar 即时开关，v0.7.8.15）
 
 	/// <summary> 触发屏幕轻微震动（击杀连播/放技能的高光反馈；幅度按事件定，自动指数衰减） </summary>
 	public void Shake( float amplitude ) => _shakeAmp = MathF.Max( _shakeAmp, amplitude );
@@ -29,7 +30,10 @@ public sealed class NeonCamera : Component
 		// 整个场地平面侧视塌成一条线：主菜单背景实测就是这样（客户端竞态期同样中招）
 		ApplyPose();
 		if ( Cam.IsValid() )
+		{
 			Cam.OrthographicHeight = GameConfig.CameraBaseView;
+			_bloom = Cam.GetComponent<Bloom>();
+		}
 	}
 
 	public void SetTarget( Ball ball )
@@ -51,6 +55,14 @@ public sealed class NeonCamera : Component
 	protected override void OnUpdate()
 	{
 		base.OnUpdate();
+
+		// 泛光开关（v0.7.8.15）：控制台 cr_bloom 0/1 即时生效（幂等赋值，无抖动）；
+		// 热重载换程序集后缓存失效 → 惰性重取
+		if ( Cam.IsValid() )
+		{
+			if ( !_bloom.IsValid() ) _bloom = Cam.GetComponent<Bloom>();
+			if ( _bloom.IsValid() ) _bloom.Enabled = GameConfig.ConvarBloom;
+		}
 
 		// 自愈：热重载会把场景组件换成新程序集对象，缓存的 _target 可能变成失效引用——
 		// OnUpdate 首行早退会让相机永久冻结（实测：客户端复活着、分裂着，镜头僵死不跟）。

@@ -174,7 +174,7 @@ public sealed class PowerUpManager
 				if ( Networking.IsActive ) NetworkManager.PowerUpPicked( i, s.Kind, receiver.OwnerSteamId );
 
 				ShowBanner( receiver, s.Kind, stored: true );
-				Log.Info( $"[game] powerup stored: {NameOf( s.Kind )} -> {receiver.PlayerName}" );
+				GameLog.Info( $"[game] powerup stored: {NameOf( s.Kind )} -> {receiver.PlayerName}" );
 			}
 			// 背包满：不消耗，道具留在场上（下一颗球/下个帧再判）
 		}
@@ -236,7 +236,7 @@ public sealed class PowerUpManager
 		var kind = _slots[index].Kind;
 		Consume( index, feeder );
 		GameAchievements.FeedTriggered( feeder.OwnerSteamId );   // 成就：首次喂食触发（host 本机侧）
-		Log.Info( $"[game] powerup fed to trigger: {NameOf( kind )} -> {feeder.PlayerName}" );
+		GameLog.Info( $"[game] powerup fed to trigger: {NameOf( kind )} -> {feeder.PlayerName}" );
 	}
 
 	/// <summary> 道具效果（host 权威；质量罐即时到账，其余挂 buff，尖刺分身在游戏系统生成）。
@@ -262,7 +262,7 @@ public sealed class PowerUpManager
 				break;
 		}
 
-		Log.Info( $"[game] powerup picked: {NameOf( kind )} -> {ball.PlayerName}" );
+		GameLog.Info( $"[game] powerup picked: {NameOf( kind )} -> {ball.PlayerName}" );
 	}
 
 	byte RandomKind() => (byte)Game.Random.Float( 0f, 4.999f );

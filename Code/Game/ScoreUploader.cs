@@ -25,11 +25,11 @@ public static class ScoreUploader
 			var mass = game.TotalMassFor( local );
 			Sandbox.Services.Stats.SetValue( StatName, mass );
 			Sandbox.Services.Stats.Flush();
-			Log.Info( $"[score] uploaded {mass:0} ({StatName})" );
+			GameLog.Info( $"[score] uploaded {mass:0} ({StatName})" );
 		}
 		catch ( Exception e )
 		{
-			Log.Info( $"[score] upload failed: {e.Message}" );
+			GameLog.Info( $"[score] upload failed: {e.Message}" );
 		}
 	}
 
@@ -53,7 +53,7 @@ public static class ScoreUploader
 		}
 		catch ( Exception e )
 		{
-			Log.Info( $"[score] global board fetch failed: {e.Message}" );
+			GameLog.Info( $"[score] global board fetch failed: {e.Message}" );
 			done( null );
 		}
 	}

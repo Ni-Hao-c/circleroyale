@@ -24,7 +24,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 	{
 		base.OnStart();
 		Instance = this;
-		Log.Info( $"[net] OnStart authority={IsAuthority} active={Networking.IsActive} host={Networking.IsHost}" );
+		GameLog.Info( $"[net] OnStart authority={IsAuthority} active={Networking.IsActive} host={Networking.IsHost}" );
 	}
 
 	/// <summary>
@@ -40,7 +40,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 	{
 		if ( !IsAuthority )
 		{
-			Log.Info( "[net] client mode — skip host flow" );
+			GameLog.Info( "[net] client mode — skip host flow" );
 			return;
 		}
 
@@ -63,7 +63,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 					// 房间名带房主名——房间列表页展示用（v0.6.7.0）
 					Name = LobbyDisplayName(),
 				} );
-				Log.Info( "[net] lobby creating (Public/24)..." );
+				GameLog.Info( "[net] lobby creating (Public/24)..." );
 
 				// 等会话真正激活（CreateLobby 异步生效），最多 30 秒
 				int wait = 0;
@@ -72,20 +72,20 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 					await Task.DelayRealtimeSeconds( 0.1f );
 					wait++;
 				}
-				Log.Info( $"[net] session active={Networking.IsActive} (waited {wait * 0.1f:0.0}s)" );
+				GameLog.Info( $"[net] session active={Networking.IsActive} (waited {wait * 0.1f:0.0}s)" );
 			}
 			else if ( !createLobby )
 			{
-				Log.Info( "[net] offline room (no lobby)" );
+				GameLog.Info( "[net] offline room (no lobby)" );
 			}
 
 			// M5：开局不再自动——进房间（蛰伏球就位），host 点 START 才 StartMatchFromLobby
 			CircleroyaleGame.Current?.OnLobbyOpened();
-			Log.Info( "[net] room ready — waiting for host to start" );
+			GameLog.Info( "[net] room ready — waiting for host to start" );
 		}
 		catch ( Exception e )
 		{
-			Log.Info( $"[net] host flow failed: {e.Message} — 离线兜底" );
+			GameLog.Info( $"[net] host flow failed: {e.Message} — 离线兜底" );
 			CircleroyaleGame.Current?.OnLobbyOpened();
 		}
 	}
@@ -114,7 +114,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 			if ( best is not null )
 			{
 				var b = best.Value;
-				Log.Info( $"[net] quick join '{b.Name}' members={b.Members}/{b.MaxMembers}" );
+				GameLog.Info( $"[net] quick join '{b.Name}' members={b.Members}/{b.MaxMembers}" );
 				_lastJoinedLobby = b;   // 记住目标：掉线自动重连走同一条 Steam 路径
 
 				if ( await Networking.TryConnectSteamId( b.LobbyId ) )
@@ -141,7 +141,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 
 		try
 		{
-			Log.Info( $"[net] joining lobby '{lobby.Name}' ({lobby.Members}/{lobby.MaxMembers})" );
+			GameLog.Info( $"[net] joining lobby '{lobby.Name}' ({lobby.Members}/{lobby.MaxMembers})" );
 
 			if ( await Networking.TryConnectSteamId( lobby.LobbyId ) )
 				return;
@@ -169,7 +169,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 		{
 			// 断不开也无妨：最坏就是这次加入失败，有超时兜底
 		}
-		Log.Info( "[net] dropped stale session before connect" );
+		GameLog.Info( "[net] dropped stale session before connect" );
 	}
 
 	/// <summary> 公开大厅：默认放行（返回 false 可拒绝连接） </summary>
@@ -185,7 +185,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 		try
 		{
 			Networking.Connect( address );
-			Log.Info( $"[net] connecting to '{address}' ..." );
+			GameLog.Info( $"[net] connecting to '{address}' ..." );
 		}
 		catch ( Exception e )
 		{
@@ -218,7 +218,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 	/// </summary>
 	public void OnConnected( Connection channel )
 	{
-		Log.Info( $"[net] OnConnected '{channel.DisplayName}' id={channel.Id}" );
+		GameLog.Info( $"[net] OnConnected '{channel.DisplayName}' id={channel.Id}" );
 
 		// host 自己的本地连接：引擎在 ClientInfo 处直接 return，不会走到这里；双保险
 		if ( Connection.Local is not null && channel.Id == Connection.Local.Id ) return;
@@ -228,7 +228,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 		bool lobby = CircleroyaleGame.Current?.IsLobbyOpen ?? false;
 		_pendingJoins.Add( new PendingJoin( channel, 0f, 0.1f, false, lobby ) );
 		CircleroyaleGame.Current?.MarkLobbyDirty();
-		Log.Info( $"[net] pre-snapshot ball queued for '{channel.DisplayName}' (dormant={lobby})" );
+		GameLog.Info( $"[net] pre-snapshot ball queued for '{channel.DisplayName}' (dormant={lobby})" );
 	}
 
 	/// <summary> 该连接是否已有一颗活球（host 侧查表） </summary>
@@ -254,12 +254,12 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 	/// OnConnected（进初始快照），这里只兜底竞态。 </summary>
 	public async void OnActive( Connection channel )
 	{
-		Log.Info( $"[net] OnActive '{channel.DisplayName}' id={channel.Id}" );
+		GameLog.Info( $"[net] OnActive '{channel.DisplayName}' id={channel.Id}" );
 
 		// host 自己的本地连接：球由 OnNetworkReady 生成，跳过（见类注释）
 		if ( Connection.Local is not null && channel.Id == Connection.Local.Id )
 		{
-			Log.Info( "[net] OnActive: host's own connection — skip (host ball spawned by OnNetworkReady)" );
+			GameLog.Info( "[net] OnActive: host's own connection — skip (host ball spawned by OnNetworkReady)" );
 			return;
 		}
 
@@ -275,7 +275,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 		var game = CircleroyaleGame.Current;
 		if ( game is null )
 		{
-			Log.Info( "[net] OnActive: no game, abort" );
+			GameLog.Info( "[net] OnActive: no game, abort" );
 			return;
 		}
 
@@ -345,7 +345,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 		if ( !HasBallFor( channel ) )
 		{
 			_pendingJoins.Add( new PendingJoin( channel, 0f, 0.8f, true ) );
-			Log.Info( $"[net] join queued for '{channel.DisplayName}' (fallback) — no pre-snapshot ball" );
+			GameLog.Info( $"[net] join queued for '{channel.DisplayName}' (fallback) — no pre-snapshot ball" );
 		}
 	}
 
@@ -416,7 +416,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 		{
 			if ( !_reconnecting ) return;
 			_reconnecting = false;
-			Log.Info( "[net] reconnect: session active again" );
+			GameLog.Info( "[net] reconnect: session active again" );
 			CircleroyaleGame.Current?.NotifyReconnectStarted();
 			return;
 		}
@@ -500,7 +500,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 		var joined = CircleroyaleGame.Current?.LocalBall.IsValid() ?? false;
 		if ( joined )
 		{
-			if ( _reconnectAttempts > 0 ) Log.Info( "[net] auto-reconnect: joined OK" );
+			if ( _reconnectAttempts > 0 ) GameLog.Info( "[net] auto-reconnect: joined OK" );
 			_reconnectAttempts = 0;
 			_sinceJoinStuck = 0;
 			return;
@@ -536,19 +536,19 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 	{
 		if ( checkActive && !channel.IsActive )
 		{
-			Log.Info( "[net] join ball: connection gone, skip" );
+			GameLog.Info( "[net] join ball: connection gone, skip" );
 			return;
 		}
 
 		var game = CircleroyaleGame.Current;
 		if ( game is null )
 		{
-			Log.Info( "[net] join ball: no game, skip" );
+			GameLog.Info( "[net] join ball: no game, skip" );
 			return;
 		}
 
 		var ball = game.SpawnBall( game.RandomSpawnPos(), isBot: false, owner: channel, dormant: dormant );
-		Log.Info( $"[net] join ball for '{channel.DisplayName}': ball={( ball is null ? "REFUSED" : "ok" )} dormant={dormant} netRoot={( ball?.GameObject.IsNetworkRoot ?? false )}" );
+		GameLog.Info( $"[net] join ball for '{channel.DisplayName}': ball={( ball is null ? "REFUSED" : "ok" )} dormant={dormant} netRoot={( ball?.GameObject.IsNetworkRoot ?? false )}" );
 
 		if ( dormant ) game.MarkLobbyDirty();   // 名单亮出新人（本地面板轮刷也看得到，这里管推送）
 	}
@@ -580,7 +580,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 		_reconnectAttempts = 0;
 		_sinceJoinStuck = 0;
 		_reconnecting = false;
-		Log.Info( "[net] session reset" );
+		GameLog.Info( "[net] session reset" );
 	}
 
 	// ---- 食物与重生：静态 RPC（不依赖任何网络对象）----
@@ -714,7 +714,7 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 	public static void RequestRespawn()
 	{
 		var conn = Rpc.Caller;
-		Log.Info( $"[net] RequestRespawn from '{conn?.DisplayName ?? "null"}'" );   // 生命周期日志：定位客户端重生链路断点
+		GameLog.Info( $"[net] RequestRespawn from '{conn?.DisplayName ?? "null"}'" );   // 生命周期日志：定位客户端重生链路断点
 		if ( conn is null || !conn.IsActive ) return;
 
 		CircleroyaleGame.Current?.RespawnConnection( conn );

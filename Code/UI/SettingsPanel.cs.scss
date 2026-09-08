@@ -1,0 +1,66 @@
+SettingsPanel {
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	font-family: SimHei;
+	color: white;
+	pointer-events: all;
+
+	.sp-title {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 88px;
+		font-size: 48px;
+		font-weight: 800;
+		letter-spacing: 10px;
+		text-align: center;
+		color: #35f0ff;
+		text-shadow: 0 0 26px rgba( 53, 240, 255, 0.85 );
+	}
+
+	.sp-hint {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 178px;
+		font-size: 13px;
+		letter-spacing: 3px;
+		text-align: center;
+		color: rgba( 255, 255, 255, 0.32 );
+	}
+
+	.sp-row {
+		font-size: 22px;
+		font-weight: 700;
+		letter-spacing: 3px;
+		text-align: center;
+		color: #9ad8ff;
+		text-shadow: 0 0 10px rgba( 0, 0, 0, 0.8 );
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.sp-row:hover {
+		color: #ffffff;
+	}
+
+	.sp-back {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 936px;
+		font-size: 15px;
+		letter-spacing: 4px;
+		text-align: center;
+		color: rgba( 255, 255, 255, 0.45 );
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.sp-back:hover {
+		color: rgba( 255, 255, 255, 0.9 );
+	}
+}

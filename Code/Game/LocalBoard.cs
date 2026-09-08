@@ -48,7 +48,7 @@ public static class LocalBoard
 		}
 		catch ( Exception e )
 		{
-			Log.Info( $"[score] local board save failed: {e.Message}" );
+			GameLog.Info( $"[score] local board save failed: {e.Message}" );
 		}
 	}
 
