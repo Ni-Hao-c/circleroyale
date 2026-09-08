@@ -1,0 +1,77 @@
+EndBoard {
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	font-family: SimHei;
+	color: white;
+	pointer-events: all;
+
+	.eb-title {
+		font-size: 54px;
+		font-weight: 800;
+		letter-spacing: 10px;
+		text-align: center;
+		color: #35f0ff;
+		text-shadow: 0 0 30px rgba( 53, 240, 255, 0.85 );
+	}
+
+	.eb-winner {
+		font-size: 26px;
+		font-weight: 700;
+		letter-spacing: 3px;
+		text-align: center;
+		color: #ffcf5c;
+		text-shadow: 0 0 16px rgba( 255, 207, 92, 0.6 );
+	}
+
+	.eb-head {
+		font-size: 14px;
+		letter-spacing: 4px;
+		text-align: center;
+		color: rgba( 255, 255, 255, 0.4 );
+	}
+
+	.eb-head.global {
+		color: rgba( 53, 240, 255, 0.6 );
+	}
+
+	.eb-row {
+		font-size: 19px;
+		letter-spacing: 1px;
+		text-align: center;
+		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.9 );
+	}
+
+	.eb-row.small {
+		font-size: 16px;
+		color: rgba( 255, 255, 255, 0.66 );
+	}
+
+	.eb-row.self {
+		font-weight: 700;
+		color: #35f0ff;
+	}
+
+	.eb-note {
+		font-size: 12px;
+		letter-spacing: 2px;
+		text-align: center;
+		color: rgba( 255, 255, 255, 0.3 );
+	}
+
+	.eb-back {
+		font-size: 18px;
+		letter-spacing: 4px;
+		text-align: center;
+		color: rgba( 255, 255, 255, 0.85 );
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.eb-back:hover {
+		color: #35f0ff;
+		text-shadow: 0 0 18px rgba( 53, 240, 255, 0.9 );
+	}
+}

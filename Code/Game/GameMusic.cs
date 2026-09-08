@@ -1,0 +1,87 @@
+using System;
+
+/// <summary>
+/// 背景音乐（M4）：主菜单 = chiptune1，战斗 = battle.music。走 .sound SoundEvent（UI 标志 = 2D 平面声，
+/// 与 6 个音效同一条已验证链路；ResourceLibrary.Get&lt;SoundFile&gt; 直接取导入 mp3 取不到，实测）。
+/// **循环 = 播完自动重播**（SoundHandle 没有循环标志，Tick 里检测曲终重开）。切曲：旧曲 1s 淡出、新曲 1s 淡入。
+/// </summary>
+public static class GameMusic
+{
+	const string MenuTrack = "sounds/music/chiptune1.sound";
+	const string BattleTrack = "sounds/music/battle.music.sound";
+
+	static SoundHandle _handle;
+	static string _track;
+	static bool _wasPlaying;   // 上一帧 handle 是否有效且在播（曲终重播的判据，见 Tick）
+	static Sandbox.Audio.Mixer _musicMixer;   // Music 混音器缓存（找不到就留在默认 Game，不影响出声）
+
+	/// <summary> 音乐音量 0-1（控制台实时可调）。走 Music 混音器，别和 UI 音效一锅炖 </summary>
+	[ConVar( "cr_music_volume", Help = "Music volume 0..1 (default 0.22)" )]
+	public static float Volume { get; set; } = 0.22f;
+
+	/// <summary> 切主菜单曲（已在放就无事发生） </summary>
+	public static void PlayMenu() => Play( MenuTrack );
+
+	/// <summary> 切战斗曲（开局时调） </summary>
+	public static void PlayBattle() => Play( BattleTrack );
+
+	/// <summary> 每帧调（CircleroyaleGame.Tick，菜单阶段也要跑）：音量跟随 convar + 曲终自动重播 </summary>
+	public static void Tick()
+	{
+		if ( _track is null ) return;
+
+		// 曲终重播：引擎在声音播完后会 Dispose 掉 handle（SoundHandle.PreTick: Finished→Dispose），
+		// 所以 IsValid 会变 false——**不能**用 `if (!_handle.IsValid()) return;` 早退，否则永远到不了重播。
+		// 只在"上一帧还在播、现在失效/Finished/IsStopped"时重开，避免资源缺失时每帧空转重试。
+		if ( _wasPlaying && ( !_handle.IsValid() || _handle.Finished || _handle.IsStopped ) )
+		{
+			var path = _track;
+			_handle = default;
+			_track = null;
+			_wasPlaying = false;
+			Play( path );
+			return;
+		}
+
+		if ( !_handle.IsValid() ) return;
+
+		_handle.Volume = Volume;
+		_wasPlaying = _handle.IsPlaying;
+	}
+
+	static void Play( string path )
+	{
+		if ( _track == path && _handle.IsValid() && _handle.IsPlaying ) return;   // 已在放这首
+
+		try
+		{
+			if ( _handle.IsValid() ) _handle.Stop( 1f );   // 旧曲淡出让位
+
+			_handle = Sound.Play( path );   // 曲子 .sound 带 UI 标志 = 2D 平面声
+			_track = path;
+
+			if ( !_handle.IsValid() )
+			{
+				Log.Warning( $"[music] Sound.Play returned invalid handle: {path} (asset not imported?)" );
+				_track = null;   // 别让 Tick 每帧重试
+				return;
+			}
+
+			_wasPlaying = true;
+
+			// 路由到内置 Music 混音器（Master→Music/Game/UI/Voice，引擎 ResetToDefault 建）
+			_musicMixer ??= Sandbox.Audio.Mixer.FindMixerByName( "Music" );
+			if ( _musicMixer is not null )
+			{
+				// 用户要求：Music 混音器音量减半（引擎默认 1.0 → 0.5；绝对值赋值，热重载不叠加）
+				_musicMixer.Volume = 0.5f;
+				_handle.TargetMixer = _musicMixer;
+			}
+		}
+		catch ( Exception e )
+		{
+			Log.Warning( $"[music] play '{path}' failed: {e.Message}" );
+			_track = null;
+		}
+	}
+}

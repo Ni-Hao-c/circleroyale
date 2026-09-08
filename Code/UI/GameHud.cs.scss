@@ -1,0 +1,203 @@
+GameHud {
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	font-family: Inter;
+	color: white;
+	pointer-events: none;
+
+	.mass {
+		position: absolute;
+		left: 28px;
+		top: 20px;
+		font-size: 44px;
+		font-weight: 800;
+		color: #35f0ff;
+		text-shadow: 0 0 14px rgba( 53, 240, 255, 0.75 );
+	}
+
+	.hint {
+		position: absolute;
+		left: 30px;
+		bottom: 18px;
+		font-size: 14px;
+		letter-spacing: 2px;
+		color: rgba( 255, 255, 255, 0.42 );
+	}
+
+	.buff {
+		position: absolute;
+		right: 30px;
+		bottom: 72px;
+		font-size: 20px;
+		font-weight: 800;
+		letter-spacing: 3px;
+		text-align: right;
+		color: #35f0ff;
+		text-shadow: 0 0 12px rgba( 53, 240, 255, 0.7 );
+	}
+
+	.tips {
+		position: absolute;
+		left: 30px;
+		bottom: 44px;
+		font-size: 15px;
+		letter-spacing: 2px;
+		color: rgba( 127, 216, 255, 0.62 );
+		text-shadow: 0 0 10px rgba( 0, 0, 0, 0.85 );
+	}
+
+	.slotq {
+		position: absolute;
+		right: 30px;
+		bottom: 48px;
+		width: 132px;
+		padding: 5px 10px;
+		font-size: 14px;
+		font-weight: 700;
+		letter-spacing: 2px;
+		text-align: right;
+		background-color: rgba( 12, 20, 34, 0.78 );
+		border-radius: 4px;
+		color: rgba( 255, 255, 255, 0.3 );
+		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.85 );
+	}
+
+	.slote {
+		position: absolute;
+		right: 30px;
+		bottom: 20px;
+		width: 132px;
+		padding: 5px 10px;
+		font-size: 14px;
+		font-weight: 700;
+		letter-spacing: 2px;
+		text-align: right;
+		background-color: rgba( 12, 20, 34, 0.78 );
+		border-radius: 4px;
+		color: rgba( 255, 255, 255, 0.3 );
+		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.85 );
+	}
+
+	.banner {
+		position: absolute;
+		left: 0;
+		right: 0;
+		font-family: Inter;
+		font-size: 38px;
+		font-weight: 800;
+		letter-spacing: 8px;
+		text-align: center;
+		text-shadow: 0 0 18px rgba( 0, 0, 0, 0.9 ), 0 0 30px rgba( 0, 0, 0, 0.6 ), 0 3px 0 rgba( 0, 0, 0, 0.55 );
+	}
+
+	.banner.combo {
+		font-size: 46px;
+		letter-spacing: 12px;
+		text-shadow: 0 0 24px rgba( 255, 207, 92, 0.75 ), 0 0 44px rgba( 255, 160, 40, 0.4 ), 0 4px 0 rgba( 0, 0, 0, 0.6 );
+	}
+
+	.version {
+		position: absolute;
+		right: 28px;
+		top: 4px;
+		font-size: 11px;
+		letter-spacing: 2px;
+		color: rgba( 255, 255, 255, 0.35 );
+	}
+
+	.row {
+		font-family: SimHei;
+		font-size: 14px;
+		letter-spacing: 1px;
+		text-align: right;
+		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.9 );
+	}
+
+	.row.self {
+		font-weight: 700;
+		color: #35f0ff;
+	}
+
+	.nametag {
+		font-family: SimHei;
+		font-size: 13px;
+		text-align: center;
+		color: rgba( 255, 255, 255, 0.88 );
+		text-shadow: 0 0 6px rgba( 0, 0, 0, 0.95 );
+	}
+
+	.death-title {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 36%;
+		font-size: 54px;
+		font-weight: 800;
+		text-align: center;
+		letter-spacing: 8px;
+		color: #ff4d6d;
+		text-shadow: 0 0 24px rgba( 255, 77, 109, 0.8 );
+	}
+
+	.death-sub {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 36%;
+		margin-top: 74px;
+		font-size: 16px;
+		text-align: center;
+		letter-spacing: 4px;
+		color: rgba( 255, 255, 255, 0.6 );
+		pointer-events: all;   // 根面板 none，按钮区单独放开：点击重生（键盘失焦时的兜底通道）
+		cursor: pointer;
+	}
+
+	// ---- 比赛规则 UI（M5）：队伍条在上（52px），模式+倒计时在其下（84px，用户定稿）----
+
+	.matchinfo {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 84px;
+		font-size: 20px;
+		font-weight: 700;
+		letter-spacing: 4px;
+		text-align: center;
+		text-shadow: 0 0 12px rgba( 0, 0, 0, 0.9 );
+	}
+
+	.teamscore {
+		top: 52px;   // 位置不动（用户定稿）：队伍条在上，模式+倒计时移到它下面
+		width: 170px;
+		font-size: 15px;
+		font-family: SimHei;
+		letter-spacing: 1px;
+		text-align: center;
+		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.9 );
+	}
+
+	// ---- 击杀播报（M5"谁吃了谁"，左上分数下方）----
+
+	.killfeed {
+		width: 480px;
+		font-size: 15px;
+		font-family: SimHei;
+		letter-spacing: 1px;
+		color: rgba( 255, 255, 255, 0.68 );
+		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.95 );
+	}
+
+	.killfeed.good {
+		color: #ffcf5c;
+		font-weight: 700;
+	}
+
+	.killfeed.bad {
+		color: #ff4d6d;
+		font-weight: 700;
+	}
+}

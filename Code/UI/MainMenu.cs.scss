@@ -1,0 +1,89 @@
+MainMenu {
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	font-family: Inter;
+	color: white;
+	pointer-events: all;   // ⚠️ 只认 auto/none/all：写 normal 非法被忽略（面板默认 None=鼠标全死）
+
+	.title {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 170px;
+		font-size: 84px;
+		font-weight: 800;
+		letter-spacing: 12px;
+		color: #35f0ff;
+		text-shadow: 0 0 34px rgba( 53, 240, 255, 0.85 );
+		text-align: center;
+	}
+
+	.subtitle {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 286px;
+		font-size: 15px;
+		letter-spacing: 6px;
+		color: rgba( 255, 255, 255, 0.4 );
+		text-align: center;
+	}
+
+	.btn {
+		position: absolute;
+		left: 0;
+		right: 0;
+		font-size: 26px;
+		font-weight: 600;
+		letter-spacing: 4px;
+		color: rgba( 255, 255, 255, 0.85 );
+		text-align: center;
+		cursor: pointer;
+		pointer-events: all;
+		text-shadow: 0 0 12px rgba( 53, 240, 255, 0.3 );
+	}
+
+	.btn.host { top: 380px; }
+	.btn.join { top: 442px; }
+	.btn.bots { top: 504px; }
+	.btn.quit { top: 566px; color: rgba( 255, 255, 255, 0.4 ); }
+
+	.btn:hover {
+		color: #35f0ff;
+		text-shadow: 0 0 20px rgba( 53, 240, 255, 0.9 );
+	}
+
+	.status {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 634px;
+		font-size: 14px;
+		letter-spacing: 2px;
+		color: #ffb63b;
+		text-align: center;
+	}
+
+	// 比赛参数设置已移入游戏房间（LobbyPanel，M5 二级界面）
+
+	.version {
+		position: absolute;
+		right: 28px;
+		top: 8px;
+		font-size: 11px;
+		letter-spacing: 2px;
+		color: rgba( 255, 255, 255, 0.35 );
+	}
+
+	.hint {
+		position: absolute;
+		left: 30px;
+		bottom: 18px;
+		font-size: 14px;
+		letter-spacing: 2px;
+		color: rgba( 255, 255, 255, 0.42 );
+	}
+}

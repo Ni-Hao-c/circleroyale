@@ -1,0 +1,13 @@
+{
+  "UI": true,
+  "Volume": 0.85,
+  "Pitch": 1.0,
+  "PitchRandom": 0.06,
+  "SelectionMode": "Random",
+  "Sounds": [
+    "sounds/cr_eat_ball.vsnd"
+  ],
+  "DistanceAttenuation": true,
+  "Distance": 8000,
+  "__version": 1
+}

@@ -1,0 +1,20 @@
+{
+  "Title": "CircleRoyale",
+  "Type": "game",
+  "Org": "slfy",
+  "Ident": "circleroyale",
+  "Schema": 1,
+  "IncludeSourceFiles": false,
+  "Resources": "/scenes/*\n/ui/*\n/fonts/*\n/sounds/*\n/shaders/*",
+  "PackageReferences": [],
+  "EditorReferences": null,
+  "Mounts": null,
+  "IsStandaloneOnly": false,
+  "Metadata": {
+    "MaxPlayers": 24,
+    "TickRate": 50,
+    "GameNetworkType": "Multiplayer",
+    "StartupScene": "scenes/minimal.scene",
+    "LaunchMode": "Normal"
+  }
+}

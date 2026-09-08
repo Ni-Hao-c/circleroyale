@@ -1,0 +1,9 @@
+{
+  "UI": true,
+  "Volume": 1.0,
+  "Pitch": 1.0,
+  "Sounds": [
+    "sounds/music/chiptune1.vsnd"
+  ],
+  "__version": 1
+}

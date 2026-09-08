@@ -1,0 +1,217 @@
+LobbyPanel {
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	font-family: SimHei;
+	color: white;
+	pointer-events: all;
+
+	.lp-title {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 88px;
+		font-size: 48px;
+		font-weight: 800;
+		letter-spacing: 10px;
+		text-align: center;
+		color: #35f0ff;
+		text-shadow: 0 0 26px rgba( 53, 240, 255, 0.85 );
+	}
+
+	.lp-status {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 168px;
+		font-size: 15px;
+		letter-spacing: 3px;
+		text-align: center;
+		color: #ffb63b;
+	}
+
+	.lp-head {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 246px;
+		font-size: 12px;
+		letter-spacing: 4px;
+		text-align: center;
+		color: rgba( 255, 255, 255, 0.32 );
+	}
+
+	.lp-head.players {
+		top: 350px;
+	}
+
+	.lp-setting {
+		position: absolute;
+		top: 282px;
+		width: 33.33%;
+		font-size: 17px;
+		letter-spacing: 2px;
+		text-align: center;
+		color: #9ad8ff;
+		text-shadow: 0 0 10px rgba( 0, 0, 0, 0.6 );
+		cursor: pointer;
+		pointer-events: all;   // 面板默认 None；客户端点击由 CycleSetting 的 _isHost 守卫挡掉
+	}
+
+	.lp-setting:hover {
+		color: #35f0ff;
+	}
+
+	.lp-setting.set-mode { left: 0; }
+	.lp-setting.set-time { left: 33.33%; }
+	.lp-setting.set-players { left: 66.66%; }
+
+	// 设置可点提示（v0.7.8.0，仅 host）：模式行呼吸金光下方的引导小字
+	.lp-setting-hint {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 318px;
+		font-size: 12px;
+		letter-spacing: 4px;
+		text-align: center;
+		color: rgba( 255, 199, 80, 0.55 );
+		text-shadow: 0 0 10px rgba( 0, 0, 0, 0.8 );
+	}
+
+	// 道具图例（v0.7.8.4 用户定稿）：移到左下角（玩家列表左列的下方空白，红箭头位置）
+	.lp-legend-head {
+		position: absolute;
+		left: 64px;
+		top: 660px;
+		width: 440px;
+		font-size: 12px;
+		letter-spacing: 4px;
+		text-align: left;
+		color: rgba( 255, 255, 255, 0.32 );
+	}
+
+	.lp-legend-name {
+		position: absolute;
+		left: 64px;
+		width: 200px;
+		font-size: 15px;
+		font-weight: 700;
+		letter-spacing: 2px;
+		text-align: left;
+		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.9 );
+	}
+
+	.lp-legend-desc {
+		position: absolute;
+		left: 268px;
+		width: 290px;
+		font-size: 13px;
+		letter-spacing: 1px;
+		text-align: left;
+		color: rgba( 255, 255, 255, 0.62 );
+		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.9 );
+	}
+
+	.lp-legend-note {
+		position: absolute;
+		left: 64px;
+		top: 862px;
+		width: 490px;
+		font-size: 11px;
+		letter-spacing: 2px;
+		text-align: left;
+		color: rgba( 255, 255, 255, 0.32 );
+		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.9 );
+	}
+
+	.lp-player {
+		font-size: 16px;
+		letter-spacing: 1px;
+		text-align: left;
+		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.9 );
+	}
+
+	// BOTS 提示 / LEAVE（v0.7.8.5 用户定稿）：移入右下蓝框区域，与 START 竖排右对齐
+	.lp-note {
+		position: absolute;
+		right: 64px;
+		top: 690px;
+		width: 520px;
+		font-size: 12px;
+		letter-spacing: 3px;
+		text-align: right;
+		color: rgba( 255, 255, 255, 0.3 );
+	}
+
+	.lp-countdown {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 548px;
+		font-family: Inter;
+		font-size: 40px;
+		font-weight: 800;
+		letter-spacing: 8px;
+		text-align: center;
+		color: #ffcf5c;
+		text-shadow: 0 0 24px rgba( 255, 207, 92, 0.8 );
+	}
+
+	// START / JOIN GAME（v0.7.8.5 用户定稿）：右下蓝框区域中部
+	.lp-start {
+		position: absolute;
+		right: 64px;
+		top: 780px;
+		font-size: 26px;
+		font-weight: 700;
+		letter-spacing: 6px;
+		text-align: right;
+		color: #35f0ff;
+		cursor: pointer;
+		pointer-events: all;
+		text-shadow: 0 0 18px rgba( 53, 240, 255, 0.7 );
+	}
+
+	.lp-start:hover {
+		color: #ffffff;
+		text-shadow: 0 0 26px rgba( 53, 240, 255, 1 );
+	}
+
+	.lp-join {
+		position: absolute;
+		right: 64px;
+		top: 780px;
+		font-size: 26px;
+		font-weight: 700;
+		letter-spacing: 6px;
+		text-align: right;
+		color: #ffcf5c;
+		cursor: pointer;
+		pointer-events: all;
+		text-shadow: 0 0 18px rgba( 255, 207, 92, 0.7 );
+	}
+
+	.lp-join:hover {
+		color: #ffffff;
+		text-shadow: 0 0 26px rgba( 255, 207, 92, 1 );
+	}
+
+	.lp-leave {
+		position: absolute;
+		right: 64px;
+		top: 880px;
+		font-size: 15px;
+		letter-spacing: 4px;
+		text-align: right;
+		color: rgba( 255, 255, 255, 0.45 );
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.lp-leave:hover {
+		color: rgba( 255, 255, 255, 0.9 );
+	}
+}

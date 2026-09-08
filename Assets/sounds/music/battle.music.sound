@@ -1,0 +1,9 @@
+{
+  "UI": true,
+  "Volume": 1.0,
+  "Pitch": 1.0,
+  "Sounds": [
+    "sounds/music/battle.music.vsnd"
+  ],
+  "__version": 1
+}

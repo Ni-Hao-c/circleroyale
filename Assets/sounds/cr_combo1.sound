@@ -1,0 +1,13 @@
+{
+  "UI": true,
+  "Volume": 0.75,
+  "Pitch": 1.0,
+  "PitchRandom": 0.03,
+  "SelectionMode": "Random",
+  "Sounds": [
+    "sounds/cr_combo.vsnd"
+  ],
+  "DistanceAttenuation": true,
+  "Distance": 8000,
+  "__version": 1
+}

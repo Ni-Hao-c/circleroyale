@@ -1,0 +1,112 @@
+RoomBrowser {
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	font-family: SimHei;
+	color: white;
+	pointer-events: all;
+
+	.rb-title {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 88px;
+		font-size: 48px;
+		font-weight: 800;
+		letter-spacing: 10px;
+		text-align: center;
+		color: #35f0ff;
+		text-shadow: 0 0 26px rgba( 53, 240, 255, 0.85 );
+	}
+
+	.rb-status {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 168px;
+		font-size: 15px;
+		letter-spacing: 3px;
+		text-align: center;
+		color: #ffb63b;
+	}
+
+	.rb-head {
+		position: absolute;
+		left: 460px;
+		width: 1000px;
+		top: 258px;
+		font-size: 12px;
+		letter-spacing: 3px;
+		text-align: left;
+		color: rgba( 255, 255, 255, 0.32 );
+	}
+
+	.rb-row {
+		position: absolute;
+		font-size: 19px;
+		letter-spacing: 1px;
+		text-align: left;
+		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.9 );
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.rb-row:hover {
+		color: #35f0ff;
+	}
+
+	.rb-refresh {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 742px;
+		font-size: 20px;
+		font-weight: 700;
+		letter-spacing: 5px;
+		text-align: center;
+		color: #9ad8ff;
+		cursor: pointer;
+		pointer-events: all;
+		text-shadow: 0 0 14px rgba( 0, 0, 0, 0.7 );
+	}
+
+	.rb-refresh:hover {
+		color: #ffffff;
+	}
+
+	.rb-local {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 806px;
+		font-size: 16px;
+		letter-spacing: 4px;
+		text-align: center;
+		color: #ffcf5c;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.rb-local:hover {
+		color: #ffffff;
+	}
+
+	.rb-back {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 936px;
+		font-size: 15px;
+		letter-spacing: 4px;
+		text-align: center;
+		color: rgba( 255, 255, 255, 0.45 );
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.rb-back:hover {
+		color: rgba( 255, 255, 255, 0.9 );
+	}
+}
