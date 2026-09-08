@@ -102,6 +102,8 @@ public sealed class GameHud : PanelComponent
 		"Shield blocks being eaten, not spikes — don't hug spikes with it",
 		"Magnet: 8s of double food pickup radius",
 		"Big balls must drive OVER pickups to grab them — smalls grab easy",
+		"Your split cells pick up powerups into the same Q / E bag",
+		"Off-screen teammates show an edge arrow — follow it to regroup",
 		"Main ball eaten? Biggest cell takes over — lose all cells and you're out",
 		"P: bail out of the match back to the lobby",
 		"Bigger = clumsier turning — plan your moves ahead",
@@ -280,6 +282,7 @@ public sealed class GameHud : PanelComponent
 		UpdateTips();
 		UpdatePowerSlots( game );
 		UpdateBanners();
+		GameAchievements.MatchTick( game );   // 成就每帧体检：质量里程碑/8身体/存活5分钟/背包双满
 		// 名牌投影改由 NeonCamera 在写完相机姿态的同一时刻调用（UpdateTagPositions），
 		// 保证投影用的相机位置/变焦与渲染帧完全一致——引擎查询有帧间差，快速滑屏时名牌会飞出屏（实测）
 	}
@@ -319,6 +322,13 @@ public sealed class GameHud : PanelComponent
 		// 解析投影：s = 每像素世界单位；屏幕右=-Y、屏幕下=-X
 		var s = orthoHeight / size.y;
 
+		// 队友出屏指示（v0.7.8.12）：团队赛 + 本机球有效时启用
+		var local = game.LocalBall;
+		bool allyMode = MatchState.IsTeam && local.IsValid();
+		var marginW = 56f * s;                      // 贴边内缩（世界单位）
+		var halfX = size.y * 0.5f * s;              // 屏幕高度方向 ↔ 世界 X
+		var halfY = size.x * 0.5f * s;              // 屏幕宽度方向 ↔ 世界 Y
+
 		// 投影 + 摆字（球与分身共用一份逻辑）
 		void Place( TagSlot slot, Vector3 worldPos, string text )
 		{
@@ -339,6 +349,7 @@ public sealed class GameHud : PanelComponent
 			slot.Label.Style.Display = DisplayMode.Flex;
 			slot.Label.Style.Left = px / uiScale - 80f;
 			slot.Label.Style.Top = py / uiScale + 8f;
+			slot.Label.Style.FontColor = new Color( 1f, 1f, 1f, 0.88f );   // 复位（队友出屏指示曾设为队伍色）
 			SetText( slot.Label, text );
 			slot.Shown = true;
 		}
@@ -356,6 +367,38 @@ public sealed class GameHud : PanelComponent
 				_tagMap[b.Id] = slot;
 			}
 			slot.Used = true;
+
+			// 队友出屏指示（v0.7.8.12）：主球钳到视口贴边——世界空间箭头指向真实方位，
+			// 名字贴在箭头内侧（队友色）。视野内走下方普通名牌路径
+			if ( allyMode && b != local && b.TeamIndex >= 0 && b.TeamIndex == local.TeamIndex )
+			{
+				var cx = Math.Clamp( b.WorldPosition.x, camPos.x - halfX + marginW, camPos.x + halfX - marginW );
+				var cy = Math.Clamp( b.WorldPosition.y, camPos.y - halfY + marginW, camPos.y + halfY - marginW );
+				var dx = b.WorldPosition.x - cx;
+				var dy = b.WorldPosition.y - cy;
+				var dl = MathF.Sqrt( dx * dx + dy * dy );
+
+				if ( dl > 0.001f )   // ≈0 = 在视口内（钳制没生效），落普通名牌
+				{
+					dx /= dl;
+					dy /= dl;
+
+					NeonRenderer.EdgeArrow( new Vector3( cx, cy, 0f ), new Vector2( dx, dy ), b.NeonColor, 30f * s );
+
+					var lx = cx - dx * 46f * s;   // 名字朝屏内偏 ~46px
+					var ly = cy - dy * 46f * s;
+					var px = size.x * 0.5f - ( ly - camPos.y ) / s;
+					var py = size.y * 0.5f - ( lx - camPos.x ) / s;
+
+					slot.Label.Style.Display = DisplayMode.Flex;
+					slot.Label.Style.Left = px / uiScale - 80f;
+					slot.Label.Style.Top = py / uiScale + 8f;
+					SetText( slot.Label, TagText( b.PlayerName, b.TeamIndex ) );
+					slot.Label.Style.FontColor = b.NeonColor;
+					slot.Shown = true;
+					continue;
+				}
+			}
 
 			Place( slot, b.WorldPosition, TagText( b.PlayerName, b.TeamIndex ) );
 		}

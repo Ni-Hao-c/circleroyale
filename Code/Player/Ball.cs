@@ -95,6 +95,7 @@ public sealed class Ball : Component
 		CircleroyaleGame.Current?.Hud?.AddBanner( GameHud.ActivationText( kind ), GameHud.KindColor( kind ) );
 		GameSfx.Pickup();
 		CircleroyaleGame.Current?.Camera?.Shake( 5f );   // 放技能轻震（击杀震更猛，随 combo 加码）
+		GameAchievements.PowerUsed( kind );   // 成就：首次用道具 / 首次放尖刺（v0.7.8.14）
 
 		if ( NetworkManager.IsAuthority )
 			UsePower( slot );
@@ -110,6 +111,9 @@ public sealed class Ball : Component
 	public bool Alive { get; set; } = true;
 
 	public float Radius => GameConfig.StartRadius * MathF.Sqrt( Mass / GameConfig.StartMass );
+
+	/// <summary> 本条命已存活秒数（成就"存活 5 分钟"用；重生时 _sinceSpawn 归零） </summary>
+	public float LifeSeconds => _sinceSpawn;
 
 	/// <summary> 本球的霓虹色（由 ColorIndex 从调色板取） </summary>
 	public Color NeonColor => GameConfig.Palette[Math.Clamp( ColorIndex, 0, GameConfig.Palette.Length - 1 )];
@@ -349,22 +353,23 @@ public sealed class Ball : Component
 		var inputDir = BallInput.GetMoveDir( Scene.Camera );
 		if ( inputDir.Length > 0.001f ) _lastMoveDir = inputDir;
 
-		// 瞄准（v0.7.0.0 用户需求）：分裂/吐孢子指向光标，光标正贴球心时回退移动方向
+		// 瞄准（v0.7.0.0 用户需求）：_lastAimDir 供渲染瞄准线用；动作方向由 host 按身体逐个算
 		var aimDir = BallInput.GetAimDir( Scene.Camera, WorldPosition );
 		if ( aimDir.Length > 0.001f ) _lastAimDir = aimDir;
-		var actionDir = _lastAimDir.Length > 0.001f ? _lastAimDir : _lastMoveDir;
 
 		// 鼠标键并行（v0.7.4.1 用户需求）：右键分裂、左键吐丝（"Attack1"/"Attack2" 为引擎内建按钮，
-		// 官方项目同款用法）；空格/R 保留，两套键位共存。左键吐丝天然朝光标（actionDir 即瞄准方向）
+		// 官方项目同款用法）；空格/R 保留，两套键位共存。
+		// v0.7.8.7 手感：传**光标世界坐标**而非方向——host 对每个身体单独算指向（分身也朝光标）
+		var aimPoint = BallInput.GetAimPoint( Scene.Camera );
+
 		if ( GameConfig.EnableSplit && ( Input.Pressed( "Jump" ) || Input.Pressed( "Attack2" ) ) )
 		{
-			var splitDir = actionDir;
 			if ( Mass >= GameConfig.SplitMinMass ) GameSfx.Split( WorldPosition );
 
 			if ( NetworkManager.IsAuthority )
-				CircleroyaleGame.Current?.DoSplit( this, splitDir );
+				CircleroyaleGame.Current?.DoSplit( this, aimPoint );
 			else
-				RequestSplit( splitDir );
+				RequestSplit( aimPoint );
 		}
 
 		if ( GameConfig.EnableEject
@@ -372,13 +377,12 @@ public sealed class Ball : Component
 			&& _sinceEject > GameConfig.EjectCooldownSeconds )
 		{
 			_sinceEject = 0;
-			var ejectDir = actionDir;
 			if ( Mass >= 2f ) GameSfx.Eject( WorldPosition );   // 至少能吐最小一颗（下限 1 + 消耗 1）
 
 			if ( NetworkManager.IsAuthority )
-				CircleroyaleGame.Current?.DoEject( this, ejectDir );
+				CircleroyaleGame.Current?.DoEject( this, aimPoint );
 			else
-				RequestEject( ejectDir );
+				RequestEject( aimPoint );
 		}
 
 		// 道具主动使用（v0.7.5.0）：Q/E 释放背包里的道具——权威端直接触发，客户端发 RPC。
@@ -405,7 +409,8 @@ public sealed class Ball : Component
 			_sinceSpawn = 0;          // 复活保护期（本地表现；权威保护期在 host 的 Init 里）
 			_velocity = Vector3.Zero;
 			WorldPosition = RandomSpawnPos();   // owner 自己随机换位（位置归 owner 模拟）
-			GameSfx.Respawn( WorldPosition );
+			if ( GameSfx.IsMine( OwnerSteamId ) )   // 只播本机球：开局 32 个 bot 同帧生成曾叠 33 层音（v0.7.8.10 修）
+				GameSfx.Respawn( WorldPosition );
 			GameSfx.ResetEatCount();   // 下一条命吃食物音从 0 重新计
 			GameSfx.ResetCombo();      // 连击清零（新的一条命重新起算）
 			Log.Info( $"[ball] local respawn '{PlayerName}'" );
@@ -452,24 +457,25 @@ public sealed class Ball : Component
 		return new Vector3( Game.Random.Float( -half, half ), Game.Random.Float( -half, half ), 0f );
 	}
 
-	// ---- 分裂/吐孢子 RPC（M3）：客户端 → host，host 校验归属后执行 ----
+	// ---- 分裂/吐孢子 RPC（M3）：客户端 → host，host 校验归属后执行。
+	// v0.7.8.7：参数语义改为**光标世界坐标**（aimPoint），host 逐身体算指向 ----
 
 	[Rpc.Host]
-	public void RequestSplit( Vector2 dir )
+	public void RequestSplit( Vector2 aimPoint )
 	{
 		var caller = Rpc.Caller;
 		if ( caller is not null && caller.SteamId.Value != OwnerSteamId ) return;   // 只能操作自己的球
 
-		CircleroyaleGame.Current?.DoSplit( this, dir );
+		CircleroyaleGame.Current?.DoSplit( this, aimPoint );
 	}
 
 	[Rpc.Host]
-	public void RequestEject( Vector2 dir )
+	public void RequestEject( Vector2 aimPoint )
 	{
 		var caller = Rpc.Caller;
 		if ( caller is not null && caller.SteamId.Value != OwnerSteamId ) return;
 
-		CircleroyaleGame.Current?.DoEject( this, dir );
+		CircleroyaleGame.Current?.DoEject( this, aimPoint );
 	}
 
 	[Rpc.Host]

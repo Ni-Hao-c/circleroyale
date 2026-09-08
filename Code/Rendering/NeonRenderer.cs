@@ -169,6 +169,50 @@ using System;
 		}
 
 		DrawParticles();
+		DrawEdgeArrows();
+	}
+
+	// ---- 屏幕边缘队友指示箭头（v0.7.8.12）：GameHud 名牌重投时写入请求，本组件 OnUpdate 末尾消费 ----
+
+	sealed class EdgeArrowReq
+	{
+		public Vector3 Pos;      // 贴边点（世界）
+		public Vector2 Dir;      // 指向队友真实方位（世界，单位向量）
+		public Color Color;
+		public float Size;       // 世界单位（按每像素世界单位折算，保持像素大小恒定）
+	}
+
+	static readonly List<EdgeArrowReq> _edgeArrows = new();
+
+	/// <summary> 请求一支边缘箭头（贴边世界点 + 指向 + 颜色）。OnUpdate 消费后清空，晚一帧无感 </summary>
+	public static void EdgeArrow( Vector3 pos, Vector2 dir, Color color, float size )
+	{
+		_edgeArrows.Add( new EdgeArrowReq { Pos = pos, Dir = dir, Color = color, Size = size } );
+	}
+
+	/// <summary> 实心三角箭头 + 短尾杆，朝向 Dir；加色批次下与霓虹风格一致 </summary>
+	void DrawEdgeArrows()
+	{
+		for ( int i = 0; i < _edgeArrows.Count; i++ )
+		{
+			var r = _edgeArrows[i];
+			var d = new Vector3( r.Dir.x, r.Dir.y, 0f );
+			var perp = new Vector3( -r.Dir.y, r.Dir.x, 0f );
+			var len = r.Size;
+			var halfW = len * 0.5f;
+
+			var tip = r.Pos + d * len;
+			var b1 = r.Pos + perp * halfW;
+			var b2 = r.Pos - perp * halfW;
+
+			AddTri( _tris, b1, b2, tip, r.Color * 0.9f );
+
+			// 尾杆：从箭头向屏内延伸一小段，提示"方向"而非"位置点"
+			var t0 = r.Pos - d * len * 0.6f;
+			_lines.AddVertex( new Vertex( t0, r.Color * 0.5f ) );
+			_lines.AddVertex( new Vertex( r.Pos, r.Color * 0.5f ) );
+		}
+		_edgeArrows.Clear();
 	}
 
 	// ---- CPU 粒子（M3 表现力）：走同一霓虹加色批次，风格统一、零资产依赖 ----

@@ -44,4 +44,16 @@ public static class BallInput
 
 		return new Vector2( dx / len, dy / len );
 	}
+
+	/// <summary>
+	/// 光标世界坐标（v0.7.8.7 手感）：分裂/吐孢子传"点"不传"方向"——host 对主球和每个分身
+	/// 各自算指向（分身也朝光标吐，agar 标准），正贴某颗身体时该身体回退移动方向。
+	/// </summary>
+	public static Vector2 GetAimPoint( CameraComponent camera )
+	{
+		if ( !camera.IsValid() ) return Vector2.Zero;
+
+		var ray = camera.ScreenPixelToRay( Mouse.Position );
+		return new Vector2( ray.Position.x, ray.Position.y );
+	}
 }

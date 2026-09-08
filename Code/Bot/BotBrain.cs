@@ -7,9 +7,12 @@ using System.Collections.Generic;
 /// 每 BotDecisionInterval 秒决策一次，方向写入 Ball.SetBotDirection。
 /// 进阶能力（v0.6.6.0，用户需求）：
 /// - **分裂捕猎**：贴身且分出去的一半仍够吃时，朝猎物分裂（agar 标准秒杀手法），有冷却与难度门槛；
+/// - **分裂逃命**（v0.7.8.7）：威胁到嘴边时朝逃跑方向分裂（冲量前窜+变轻提速），逃命优先于捕猎；
 /// - **吐孢子喂队友**（团队赛）：向范围内更大的队友喂孢子（养大哥），喂到自己不再明显小于对方为止；
+/// - **顺路捡道具**（v0.7.8.7）：附近场上有道具就冲过去（bot 拾取即用）；
+/// - **孢子觅食**（v0.7.8.7）：散落孢子按性价比折算进觅食目标，不再无视；
 /// - **团队集结**：团队赛游荡目标偏向队友所在区域，抱团行动；
-/// - 猎物/威胁判定跳过队友（队友免伤，追了白追）。
+/// - 猎物/威胁判定跳过队友（队友免伤，追了白追）；猎物按"质量/距离"评分选性价比最高的。
 /// M2 起 bot 由 host 拥有，IsProxy 端不执行。
 /// </summary>
 public sealed class BotBrain : Component
@@ -93,7 +96,8 @@ public sealed class BotBrain : Component
 
 		_self.SetBotDirection( Aim( AvoidSpikes( DecideDir( ctx ) ) ) );
 
-		// 动作层（方向之外的能力）：分裂捕猎 / 喂队友
+		// 动作层（方向之外的能力）：分裂逃命 > 分裂捕猎 / 喂队友
+		TrySplitEscape( ctx );
 		TrySplitHunt( ctx );
 		TryFeedMate( ctx );
 	}
@@ -106,7 +110,7 @@ public sealed class BotBrain : Component
 		if ( game is null ) return ctx;
 
 		float threatDist = float.MaxValue;
-		float preyDist = float.MaxValue;
+		float preyScore = -1f;      // v0.7.8.7：猎物按"质量回报/距离"评分，不再单纯取最近
 		float feedMass = -1f;
 
 		foreach ( var b in game.Balls )
@@ -129,14 +133,20 @@ public sealed class BotBrain : Component
 				}
 			}
 			// 猎物：我够吃它、不是队友、双方都不在保护期（护盾期免战，追了也白追）；
-			// 道具护盾（v0.7.3.0）同理——追也吃不到，跳过不浪费时间
+			// 道具护盾（v0.7.3.0）同理——追也吃不到，跳过不浪费时间。
+			// v0.7.8.7：顺路的大猎物优先（质量/距离性价比），不再是"看见谁近追谁"
 			else if ( !mate && _self.Mass > b.Mass * GameConfig.EatRatio && !b.IsProtected && !_self.IsProtected
 				&& !b.HasBuff( PowerUpManager.Kind.Shield ) )
 			{
-				if ( d < GameConfig.BotHuntRange * RangeScale() && d < preyDist )
+				var range = GameConfig.BotHuntRange * RangeScale();
+				if ( d < range )
 				{
-					ctx.Prey = b;
-					preyDist = d;
+					var score = b.Mass / ( 100f + d );
+					if ( score > preyScore )
+					{
+						ctx.Prey = b;
+						preyScore = score;
+					}
 				}
 			}
 
@@ -170,17 +180,35 @@ public sealed class BotBrain : Component
 		if ( ctx.Prey.IsValid() )
 			return Norm( ctx.Prey.WorldPosition - myPos );
 
-		// 喂养：朝大哥移动（孢子沿路径滑过去；喂瘦到不满足条件自动回归觅食）
-		if ( ctx.FeedTarget.IsValid() )
-			return Norm( ctx.FeedTarget.WorldPosition - myPos );
+			// 喂养：朝大哥移动（孢子沿路径滑过去；喂瘦到不满足条件自动回归觅食）
+			if ( ctx.FeedTarget.IsValid() )
+				return Norm( ctx.FeedTarget.WorldPosition - myPos );
 
-		// 觅食：最近的食物
-		var food = NearestFoodPos( myPos );
-		if ( food.HasValue )
-		{
-			var fp = food.Value;
-			return Norm( new Vector3( fp.x, fp.y, 0f ) - myPos );
-		}
+			// 顺路捡道具（v0.7.8.7）：无威胁无猎物时附近场上有道具就冲过去（bot 拾取即用，
+			// 捡到立刻生效）；喂大哥/觅食都让位给这个
+			var pu = NearestPowerUpPos( myPos );
+			if ( pu.HasValue )
+				return Norm( new Vector3( pu.Value.x, pu.Value.y, 0f ) - myPos );
+
+			// 觅食：先看散落孢子（质量远大于食物点，值得绕路），没有再找最近食物
+			Vector2? blob = NearestBlobPos( myPos );
+			var food = NearestFoodPos( myPos );
+			if ( blob.HasValue )
+			{
+				if ( !food.HasValue ) return Norm( new Vector3( blob.Value.x, blob.Value.y, 0f ) - myPos );
+
+				// 孢子比食物点值钱好几倍：绕路 2.5 倍距离以内都值得去拿
+				var bd = myPos.Distance( new Vector3( blob.Value.x, blob.Value.y, 0f ) );
+				var fd = myPos.Distance( new Vector3( food.Value.x, food.Value.y, 0f ) );
+				var take = bd < fd * 2.5f + 160f;
+				var p = take ? blob.Value : food.Value;
+				return Norm( new Vector3( p.x, p.y, 0f ) - myPos );
+			}
+			if ( food.HasValue )
+			{
+				var fp = food.Value;
+				return Norm( new Vector3( fp.x, fp.y, 0f ) - myPos );
+			}
 
 		// 游荡：团队赛偏向队友所在区域（集结抱团，v0.6.6.0），否则随机巡游点
 		if ( !_hasWander || myPos.Distance( _wanderTarget ) < 120f )
@@ -204,8 +232,34 @@ public sealed class BotBrain : Component
 	}
 
 	/// <summary>
+	/// 分裂逃命（v0.7.8.7，agar 保命手法）：威胁即将咬到（距离 < 双方半径之和 + 一口余量）且
+	/// 自身分裂后仍是像样的身体 → 朝逃跑方向分裂——分身带冲量瞬间前窜、主体变轻提速，
+	/// 脱险后冷却一到自然合体。与捕猎共用 _sinceSplit 冷却，逃命优先判定。
+	/// </summary>
+	void TrySplitEscape( BotContext ctx )
+	{
+		if ( !GameConfig.EnableSplit || ctx.Threat is null || !ctx.Threat.IsValid() ) return;
+		if ( _self.Mass < GameConfig.BotSplitMinMass * 2f ) return;          // 太小分裂=白送两份
+		if ( _sinceSplit < GameConfig.BotSplitCooldown ) return;
+
+		var to = _self.WorldPosition - ctx.Threat.WorldPosition;
+		var d = MathF.Max( to.Length, 0.001f );
+		if ( d > ctx.Threat.Radius + _self.Radius + 60f ) return;            // 还没到嘴边不浪费质量
+		if ( Game.Random.Float( 0f, 1f ) > ActionChance() ) return;
+
+		_sinceSplit = 0;
+		// 逃跑方向 = 反向 + 朝场地中心分量（与 DecideDir 逃跑同一套）；传"瞄准点"语义
+		var away = Norm( to + ( Vector3.Zero - _self.WorldPosition ).Normal * 0.45f );
+		var aimPoint = new Vector2( _self.WorldPosition.x + away.x * 2048f,
+			_self.WorldPosition.y + away.y * 2048f );
+		CircleroyaleGame.Current?.DoSplit( _self, aimPoint );
+		Log.Info( $"[bot] split-escape '{_self.PlayerName}' <- '{ctx.Threat.PlayerName}'" );
+	}
+
+	/// <summary>
 	/// 分裂捕猎（v0.6.6.0）：贴身（半径+打击距离内）、分出去的一半仍够吃猎物、过冷却与
 	/// 难度概率门槛 → 朝猎物分裂。分身带冲量飞出去，之后跟随主人转向继续压猎物。
+	/// v0.7.8.7：传猎物位置为瞄准点——每颗身体各自朝猎物扇形合围。
 	/// </summary>
 	void TrySplitHunt( BotContext ctx )
 	{
@@ -214,13 +268,12 @@ public sealed class BotBrain : Component
 		if ( _self.Mass * 0.5f < ctx.Prey.Mass * GameConfig.EatRatio ) return;      // 分身必须还能吃掉猎物
 		if ( _sinceSplit < GameConfig.BotSplitCooldown ) return;
 
-		var to = ctx.Prey.WorldPosition - _self.WorldPosition;
-		var d = to.Length;
+		var d = _self.WorldPosition.Distance( ctx.Prey.WorldPosition );
 		if ( d > _self.Radius + GameConfig.BotSplitRange * RangeScale() ) return;
 		if ( Game.Random.Float( 0f, 1f ) > ActionChance() ) return;
 
 		_sinceSplit = 0;
-		CircleroyaleGame.Current?.DoSplit( _self, new Vector2( to.x / d, to.y / d ) );
+		CircleroyaleGame.Current?.DoSplit( _self, new Vector2( ctx.Prey.WorldPosition.x, ctx.Prey.WorldPosition.y ) );
 		Log.Info( $"[bot] split-hunt '{_self.PlayerName}' -> '{ctx.Prey.PlayerName}'" );
 	}
 
@@ -237,9 +290,10 @@ public sealed class BotBrain : Component
 		if ( Game.Random.Float( 0f, 1f ) > ActionChance() ) return;
 
 		_sinceFeed = 0;
-		var to = ctx.FeedTarget.WorldPosition - _self.WorldPosition;
-		var d = MathF.Max( to.Length, 0.001f );
-		CircleroyaleGame.Current?.DoEject( _self, new Vector2( to.x / d, to.y / d ) );
+		// 传大哥位置为瞄准点（v0.7.8.7）：每颗身体各自朝大哥吐——远处的分身不再沿
+		// 主球方向平行走空，孢子真正落进大哥嘴里
+		CircleroyaleGame.Current?.DoEject( _self,
+			new Vector2( ctx.FeedTarget.WorldPosition.x, ctx.FeedTarget.WorldPosition.y ) );
 	}
 
 	/// <summary> 避刺：任何体积都得绕（感知距离 = 自身半径 + SpikeRadius×2.2） </summary>
@@ -295,6 +349,58 @@ public sealed class BotBrain : Component
 
 			best = dSq;
 			bestPos = foods[i].Pos;
+		}
+		return bestPos;
+	}
+
+	/// <summary> 感知范围内最近的场上道具（v0.7.8.7：bot 会专程去捡，拾取即用） </summary>
+	Vector2? NearestPowerUpPos( Vector3 myPos )
+	{
+		var mgr = CircleroyaleGame.Current?.PowerUps;
+		if ( mgr is null || !mgr.Ready ) return null;
+
+		var best = float.MaxValue;
+		Vector2? bestPos = null;
+		var seek = GameConfig.BotSeekFoodRange * 0.75f * RangeScale();
+		var seekSq = seek * seek;
+
+		foreach ( var s in mgr.Slots )
+		{
+			if ( !s.Alive ) continue;
+
+			var dx = s.Pos.x - myPos.x;
+			var dy = s.Pos.y - myPos.y;
+			var dSq = dx * dx + dy * dy;
+			if ( dSq > seekSq || dSq >= best ) continue;
+
+			best = dSq;
+			bestPos = s.Pos;
+		}
+		return bestPos;
+	}
+
+	/// <summary> 感知范围内最近的散落孢子（v0.7.8.7：吐丝/分裂掉落的大颗质量，bot 不再无视） </summary>
+	Vector2? NearestBlobPos( Vector3 myPos )
+	{
+		var cells = CircleroyaleGame.Current?.Cells;
+		if ( cells is null || cells.Count == 0 ) return null;
+
+		var best = float.MaxValue;
+		Vector2? bestPos = null;
+		var seek = GameConfig.BotSeekFoodRange * RangeScale();
+		var seekSq = seek * seek;
+
+		foreach ( var c in cells )
+		{
+			if ( c.PieceKind != CellPiece.Kind.EjectedMass ) continue;
+
+			var dx = c.Pos.x - myPos.x;
+			var dy = c.Pos.y - myPos.y;
+			var dSq = dx * dx + dy * dy;
+			if ( dSq > seekSq || dSq >= best ) continue;
+
+			best = dSq;
+			bestPos = new Vector2( c.Pos.x, c.Pos.y );
 		}
 		return bestPos;
 	}

@@ -613,6 +613,14 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 	[Rpc.Broadcast]
 	public static void PowerUpRespawned( int slot, byte kind, float x, float y ) => CircleroyaleGame.Current?.OnPowerUpRespawnedRemote( slot, kind, x, y );
 
+	/// <summary> 重生提示音广播（host 复活一颗球后）：各端按"队友才响"落地（v0.7.8.11） </summary>
+	[Rpc.Broadcast]
+	public static void RespawnCue( long steamId, int teamIndex ) => CircleroyaleGame.Current?.OnRespawnCueRemote( steamId, teamIndex );
+
+	/// <summary> 尖刺分身炸大奖广播（host 判定后）：成就解锁在尖刺主人的机器上落地（v0.7.8.13） </summary>
+	[Rpc.Broadcast]
+	public static void SpikeReward( long ownerSteamId ) => GameAchievements.OnSpikeRewardRemote( ownerSteamId );
+
 	/// <summary> 个人高光横幅广播（v0.7.6.0）：mode 0=存入背包 / 1=喂养触发激活——
 	/// host 本地已播，客户端按 ownerSteamId 判"是不是自己的"再显示 </summary>
 	[Rpc.Broadcast]

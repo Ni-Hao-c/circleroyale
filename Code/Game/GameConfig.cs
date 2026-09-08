@@ -8,7 +8,7 @@ public static class GameConfig
 	// ---- 版本 ----
 
 	/// <summary> 显示版本（HUD 右上角 + 日志；里程碑切换升次版本号，之后每次改代码第 4 段 +1，用于核对两端构建一致性） </summary>
-	public const string Version = "v0.7.8.5-M5";
+	public const string Version = "v0.7.8.14-M5";
 
 	/// <summary> 结算面板自动返回大厅的时长（秒）；空格可提前。多人返回 host 的房间（会话保留），单机回主菜单 </summary>
 	public const float SettlementAutoReturnSeconds = 10f;

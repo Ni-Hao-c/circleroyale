@@ -6,7 +6,7 @@ using System.Collections.Generic;
 /// （纯数据实体不走网络对象——运行时 live create 不复制到客户端，实测）。
 /// 固定槽位制：场上恒 PowerUpOnField 个槽，被捡后同槽延时重刷（换种类换位置），
 /// 全量同步只有一个小数组，中途加入/热重载恢复都便宜。
-/// 拾取仅主球（分身不捡）；效果在拾取瞬间应用到 Ball（buff 挂玩家，质量罐即时加质量）。
+/// 拾取主球与分身都算（v0.7.8.6，存主人背包）；效果在拾取瞬间应用到 Ball（buff 挂玩家，质量罐即时加质量）。
 /// Init/Tick 仅权威端调用；Apply* 仅供客户端应用远端事件。
 /// </summary>
 public sealed class PowerUpManager
@@ -97,49 +97,28 @@ public sealed class PowerUpManager
 		_feedScores = Array.Empty<float>();
 	}
 
-	/// <summary> host：拾取判定（主球专属，分身不捡）+ 到期槽位重刷。仅权威端每帧调用。
-	/// v0.7.5.0 起拾取**存入背包**（bot 例外：拾取即用）——背包满则道具留在场上不被捡 </summary>
-	public void Tick( List<Ball> balls )
+	/// <summary> host：拾取判定（主球 + 分身共用）+ 到期槽位重刷。仅权威端每帧调用。
+	/// v0.7.5.0 起拾取**存入背包**（bot 例外：拾取即用）——背包满则道具留在场上不被捡；
+	/// v0.7.8.6 起分身（SplitPiece）也走同一判定，捡到存主人背包 </summary>
+	public void Tick( List<Ball> balls, List<CellPiece> cells = null )
 	{
 		if ( _slots.Count == 0 ) return;
 
 		foreach ( var ball in balls )
 		{
 			if ( !ball.IsValid() || !ball.Alive ) continue;
+			PickupPass( ball, ball.WorldPosition, ball.Radius );
+		}
 
-			// 拾取判定封顶（v0.7.4.0 反马太）：大球不再"路过顺走"——判定圈按封顶半径算，
-			// 必须刻意碾到道具正上方才吃得到；小球反而轻松
-			var bp = ball.WorldPosition;
-			var rr = MathF.Min( ball.Radius, GameConfig.PowerUpPickRadiusCap ) + GameConfig.PowerUpRadius;
-
-			for ( int i = 0; i < _slots.Count; i++ )
+		// 分身拾取（v0.7.8.6）：捡到存主人背包（同一 Q/E 背包）；孢子不捡（中性食物团），
+		// 尖刺分身不捡（武器不兼职取货）。主人死亡的分身下一帧 TickCells 才清，这里顺带过滤
+		if ( cells is not null )
+		{
+			foreach ( var c in cells )
 			{
-				var s = _slots[i];
-				if ( !s.Alive ) continue;
-
-				var dx = s.Pos.x - bp.x;
-				var dy = s.Pos.y - bp.y;
-				if ( dx * dx + dy * dy > rr * rr ) continue;
-
-				if ( ball.IsBot )
-				{
-					Consume( i, ball );   // bot 不囤：拾取即触发效果（banner 由 Consume 内 IsMine 挡掉）
-				}
-				else if ( ball.StorePower( s.Kind ) >= 0 )
-				{
-					// 真人：存入 Q/E 背包槽（效果等玩家按键释放），道具槽重刷
-					s.Alive = false;
-					s.SincePicked = 0;
-
-					NeonRenderer.Spark( new Vector3( s.Pos.x, s.Pos.y, 0f ), ColorOf( s.Kind ) );
-					if ( GameSfx.IsMine( ball.OwnerSteamId ) )
-						GameSfx.EatFood( new Vector3( s.Pos.x, s.Pos.y, 0f ) );
-					if ( Networking.IsActive ) NetworkManager.PowerUpPicked( i, s.Kind, ball.OwnerSteamId );
-
-					ShowBanner( ball, s.Kind, stored: true );
-					Log.Info( $"[game] powerup stored: {NameOf( s.Kind )} -> {ball.PlayerName}" );
-				}
-				// 背包满：不消耗，道具留在场上（下一颗球/下个帧再判）
+				if ( c.PieceKind != CellPiece.Kind.SplitPiece ) continue;
+				if ( !c.OwnerBall.IsValid() || !c.OwnerBall.Alive ) continue;
+				PickupPass( c.OwnerBall, c.Pos, c.Radius );
 			}
 		}
 
@@ -154,6 +133,50 @@ public sealed class PowerUpManager
 			s.Pos = RandomPos();
 			if ( i < _feedScores.Length ) _feedScores[i] = 0f;   // 重刷积分清零（培养进度不作数）
 			if ( Networking.IsActive ) NetworkManager.PowerUpRespawned( i, s.Kind, s.Pos.x, s.Pos.y );
+		}
+	}
+
+	/// <summary>
+	/// 一个"拾取体"（主球或分身）扫一遍槽位。bot 拾取即用；真人存入 Q/E 背包
+	/// （效果等按键释放），背包满则道具留在场上。判定圈封顶反马太（大球要刻意碾上去）。
+	/// </summary>
+	void PickupPass( Ball receiver, Vector3 pos, float radius )
+	{
+		// 拾取判定封顶（v0.7.4.0 反马太）：大球不再"路过顺走"——判定圈按封顶半径算，
+		// 必须刻意碾到道具正上方才吃得到；小球反而轻松
+		var rr = MathF.Min( radius, GameConfig.PowerUpPickRadiusCap ) + GameConfig.PowerUpRadius;
+
+		for ( int i = 0; i < _slots.Count; i++ )
+		{
+			var s = _slots[i];
+			if ( !s.Alive ) continue;
+
+			var dx = s.Pos.x - pos.x;
+			var dy = s.Pos.y - pos.y;
+			if ( dx * dx + dy * dy > rr * rr ) continue;
+
+			if ( receiver.IsBot )
+			{
+				Consume( i, receiver );   // bot 不囤：拾取即触发效果（banner 由 Consume 内 IsMine 挡掉）
+			}
+			else if ( receiver.StorePower( s.Kind ) >= 0 )
+			{
+				// 真人：存入 Q/E 背包槽（效果等玩家按键释放），道具槽重刷
+				s.Alive = false;
+				s.SincePicked = 0;
+
+				NeonRenderer.Spark( new Vector3( s.Pos.x, s.Pos.y, 0f ), ColorOf( s.Kind ) );
+				if ( GameSfx.IsMine( receiver.OwnerSteamId ) )
+				{
+					GameSfx.EatFood( new Vector3( s.Pos.x, s.Pos.y, 0f ) );
+					GameAchievements.PowerStored();   // 成就：累计捡 5 个入包（host 本机侧）
+				}
+				if ( Networking.IsActive ) NetworkManager.PowerUpPicked( i, s.Kind, receiver.OwnerSteamId );
+
+				ShowBanner( receiver, s.Kind, stored: true );
+				Log.Info( $"[game] powerup stored: {NameOf( s.Kind )} -> {receiver.PlayerName}" );
+			}
+			// 背包满：不消耗，道具留在场上（下一颗球/下个帧再判）
 		}
 	}
 
@@ -212,6 +235,7 @@ public sealed class PowerUpManager
 
 		var kind = _slots[index].Kind;
 		Consume( index, feeder );
+		GameAchievements.FeedTriggered( feeder.OwnerSteamId );   // 成就：首次喂食触发（host 本机侧）
 		Log.Info( $"[game] powerup fed to trigger: {NameOf( kind )} -> {feeder.PlayerName}" );
 	}
 

@@ -743,3 +743,14 @@ START 保持右下。布局=中间名单 / 左下图例 / 中下提示 / 右下 
 
 右下蓝框区域（y 680-970）竖排右对齐：BOTS note top 690 → START/JOIN top 780 → LEAVE top 880。
 房间页最终布局：中上设置区、中玩家名单、左下图例块、右下操作区（note/START/LEAVE 竖排）。
+
+### M6.19-M6.26 道具闭环/手感/bot/音画/成就（v0.7.8.6~v0.7.8.14-M5，2026-09-08 用户连续需求）
+
+- **M6.19 分身拾取道具（v0.7.8.6）**：PickupPass(receiver,pos,radius) 主球/分身共用，SplitPiece 碰道具存主人同一 Q/E 背包（满则留场）；孢子/尖刺分身不捡。
+- **M6.20 逐身体瞄准 + bot 智商（v0.7.8.7）**：分裂/吐孢子 RPC 与权威入口改传**光标世界坐标**（BallInput.GetAimPoint），host 对主球与每个分身各自 DirTo——分身扇形吐丝/分裂（agar 标准）、bot 喂大哥孢子真正落嘴（原来远端分身平行走空）。bot：分裂逃命（威胁到嘴边反向分裂逃逸，与捕猎共用冷却）、顺路捡道具、觅食扫散落孢子（绕路 2.5 倍内优先）、猎物 mass/(100+d) 性价比评分。**踩坑：改 RPC 参数语义必须全量 grep 调用点——BotBrain 传单位向量当坐标编译照过。**
+- **M6.21 DoEject 遍历崩溃修复（v0.7.8.8）**：foreach(_cells) 里 SpawnBlob 超孢子上限时 _cells.Remove 挤最老=Collection was modified（bot 喂大哥高频必炸）。修=两阶段先收集后生成。**教训：凡"生成函数内部带总量收敛/淘汰"的，调用方遍历该集合时绝不能直接调。**
+- **M6.22 进入音换柔音 + 叠音修复（v0.7.8.9/10）**：cr_respawn 换 C5→E5→G5 大三和弦软叮（.sound 音量 0.8→0.6）；开局 33 层叠音（host 拥有全部 bot 球同帧生成）修=GameSfx.IsMine 过滤。**教训：Ball.OnUpdate 本地模拟分支 host 的 bot 球也跑，2D 音效都要过 IsMine。**
+- **M6.23 重生音"自己+队友"（v0.7.8.11）**：RespawnBall 加 cue 参数（开局激活 false），比赛中复活 CueRespawn(steamId,teamIndex)=host 本地+RespawnCue 广播，各端"仅队友"落地（自己由 owner 模拟分支播，防叠音）。cue 带队伍号不查球（bot SteamId 全 0，按 ID 查会撞 bot）。
+- **M6.24 队友出屏边缘指示（v0.7.8.12）**：长在名牌投影系统上（NeonCamera.ApplyPose 后同步调 UpdateTagPositions 零帧间差）。出屏队友主球钳到世界视口贴边（相机 90° 滚转：屏幕右=-Y/屏幕下=-X），NeonRenderer.EdgeArrow 请求队列画世界三角+尾杆，名字 Label 贴箭头内侧、FontColor=队友色；回屏切回普通名牌（Place 复位字体色防残留）。HUD=1080p 虚拟坐标，物理像素要除 rootPanel.Scale。
+- **M6.25 成就系统（v0.7.8.13/14，共 25 条）**：成就本体在 sbox.game 包页面配置（ident/标题/分值，全 Manual），代码只按 ident 触发；ident 未配置/已解锁时引擎静默跳过=先写代码后配页面。GameAchievements：击杀族（首杀/双杀/三杀/四杀/五连杀/大餐/复仇/累计 10/50 杀）、质量里程碑（500/1k/2k/5k 一条命）、道具族（首次用/背包双满/累计 5 包/首次喂养/首次尖刺）、8 身体/存活 5 分钟/首次被吃/首次获胜/团队夺冠/个人登顶。**规则：Unlock 只对本机玩家生效，触发点全过 GameSfx.IsMine；每次都调引擎去重；计数器进程内（重启清零，只影响解锁早晚）。**
+- **成就配置提醒**：页面漏配 champion 即补；ident 必须与 GameAchievements.cs 常量逐字一致。
