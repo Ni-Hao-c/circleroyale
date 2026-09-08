@@ -754,3 +754,28 @@ START 保持右下。布局=中间名单 / 左下图例 / 中下提示 / 右下 
 - **M6.24 队友出屏边缘指示（v0.7.8.12）**：长在名牌投影系统上（NeonCamera.ApplyPose 后同步调 UpdateTagPositions 零帧间差）。出屏队友主球钳到世界视口贴边（相机 90° 滚转：屏幕右=-Y/屏幕下=-X），NeonRenderer.EdgeArrow 请求队列画世界三角+尾杆，名字 Label 贴箭头内侧、FontColor=队友色；回屏切回普通名牌（Place 复位字体色防残留）。HUD=1080p 虚拟坐标，物理像素要除 rootPanel.Scale。
 - **M6.25 成就系统（v0.7.8.13/14，共 25 条）**：成就本体在 sbox.game 包页面配置（ident/标题/分值，全 Manual），代码只按 ident 触发；ident 未配置/已解锁时引擎静默跳过=先写代码后配页面。GameAchievements：击杀族（首杀/双杀/三杀/四杀/五连杀/大餐/复仇/累计 10/50 杀）、质量里程碑（500/1k/2k/5k 一条命）、道具族（首次用/背包双满/累计 5 包/首次喂养/首次尖刺）、8 身体/存活 5 分钟/首次被吃/首次获胜/团队夺冠/个人登顶。**规则：Unlock 只对本机玩家生效，触发点全过 GameSfx.IsMine；每次都调引擎去重；计数器进程内（重启清零，只影响解锁早晚）。**
 - **成就配置提醒**：页面漏配 champion 即补；ident 必须与 GameAchievements.cs 常量逐字一致。
+
+### M6.27 泛光调柔 + cr_bloom 开关（v0.7.8.15-M5，2026-09-08 玩家反馈）
+
+头像中间泛光太亮=Bloom（Strength 2.6/Threshold 0.30，头像照片普通亮部全进 bloom）。
+修=默认调柔（1.5/0.55）+ `cr_bloom` convar（NeonCamera.OnUpdate 惰性 GetComponent +
+Enabled 幂等应用，控制台改立即生效，热重载后自愈）。**后处理"太亮"优先查 Threshold。**
+
+### M6.28 设置页（v0.7.8.16~17-M5，2026-09-08 用户需求）
+
+主菜单 SETTINGS（[4]，QUIT 挪数字键 5 直读）；SettingsPanel 二级页（RoomBrowser 同款
+显隐/IsOpen/ReconcileUi 让位）：点行循环——BLOOM 开关 + 音乐音量五档（写 GameMusic.Volume，
+Tick 每帧应用到播放句柄即时生效）。新建二级页套路：GameObject+ScreenPanel+PanelComponent+
+类名.cs.scss + MenuAction case + CloseXxx + ReconcileUi IsOpen 让位。
+**踩坑：菜单按钮按 btn+id 类 scss 绝对定位，新按钮漏样式规则就"不显示"（settings 补 566px）。**
+
+### M6.29 发布版日志静音（v0.7.8.18-M5，2026-09-08 用户需求）
+
+GameLog.Info 封装：Game.IsEditor 才打印，发布版/专用服务器静默；全项目 73 处
+Log.Info( → GameLog.Info(（单一标识符 sed 替换 + grep 复核）。Warning/Error 不受限
+（玩家报障靠日志）。**项目级打印开关在封装层做，别散改调用点。**
+
+### M6.30 双端验收（2026-09-08 用户确认）
+
+v0.7.8.6~18 全批功能双开实测通过：分身拾取/逐身体瞄准/bot 智商/进游戏柔音/重生音
+（自己+队友）/队友出屏箭头/成就链路/设置页/泛光——目测无问题。
