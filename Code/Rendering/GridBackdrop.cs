@@ -11,8 +11,9 @@ public sealed class GridBackdrop : Component
 	SceneDynamicObject _lines;
 	float _builtHalf;   // 当前几何对应的场地半宽（变了就重建）
 
-	static readonly Color GridColor = new Color( 0.10f, 0.22f, 0.42f, 0.45f );
-	static readonly Color BorderColor = new Color( 0.10f, 0.95f, 1.00f, 0.9f );
+	// 像素风（v0.7.8.36）：浅蓝底上的淡网格 + 柔和边界（原霓虹深蓝/亮青作废）
+	static readonly Color GridColor = new Color( 0.847f, 0.910f, 0.965f, 0.9f );    // #D8E8F6
+	static readonly Color BorderColor = new Color( 0.549f, 0.749f, 0.902f, 0.9f );  // 柔和浅蓝
 
 	protected override void OnStart()
 	{
@@ -38,7 +39,7 @@ public sealed class GridBackdrop : Component
 		if ( !_lines.IsValid() )
 		{
 			_lines = new SceneDynamicObject( Scene.SceneWorld );
-			_lines.Material = Material.FromShader( "shaders/line.shader" );
+			_lines.Material = LineMaterial.Create();
 			_lines.Flags.CastShadows = false;
 			_lines.RenderLayer = SceneRenderLayer.OverlayWithDepth;
 			_lines.Attributes.SetCombo( "D_BLEND", 1 );

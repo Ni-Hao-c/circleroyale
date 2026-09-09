@@ -4,7 +4,8 @@ using System;
 /// 球（真人/bot 共用）：**owner 本地模拟移动**（真人=键盘输入，bot=host 的 BotBrain），
 /// 权威数值（Mass/IsBot/ColorIndex/PlayerName/OwnerSteamId）由 host 经 [Sync(FromHost)] 下发，
 /// 位置随网络 transform 自动同步（owner → 其他端）。
-/// 视觉：霓虹线条由 NeonRenderer 批量绘制；头像为本地 SpriteRenderer（各端按 OwnerSteamId 自取）。
+/// 视觉：球体/表情/头像全由 NeonRenderer 批量绘制（表情按 Mood 选 face_N 批次；
+/// 真人 Steam 头像各端按 OwnerSteamId 自取后经 NeonRenderer.SetAvatar 登记）。
 /// </summary>
 public sealed class Ball : Component
 {
@@ -22,6 +23,14 @@ public sealed class Ball : Component
 	/// <summary> 队伍号（团队赛 0..N-1，普通赛 -1）；host 开局轮转分配，重生不变 </summary>
 	[Sync( SyncFlags.FromHost )] public int TeamIndex { get; set; } = -1;
 
+	/// <summary> 蛰伏备用球（v0.7.8.25）：房间预留/本局多余的 bot。Alive=false 与"死亡"无法区分，
+	/// TickBots 曾把 16 颗蛰伏球当尸体原地复活成无队 FFA bot 灌进 T1——必须有独立标记 </summary>
+	[Sync( SyncFlags.FromHost )] public bool Dormant { get; set; }
+
+	/// <summary> 主人账号等级（v0.7.8.19）：各端算好写进**自己的球**（普通 [Sync]=owner 可写），
+	/// 全场名牌可见；bot 恒 0 不显示 </summary>
+	[Sync] public int AccountLevel { get; set; }
+
 	// ---- 道具 buff（v0.7.3.0）：host 权威写入，各端展示/效果共用。
 	// Kind 残留旧值没关系，HasBuff 只看 _sinceBuff < BuffDuration；
 	// serial 自增保证"同类 buff 再捡一次"也触发 [Change]（客户端重置本地计时） ----
@@ -31,6 +40,10 @@ public sealed class Ball : Component
 	[Sync( SyncFlags.FromHost )] public float BuffDuration { get; set; }
 
 	[Sync( SyncFlags.FromHost ), Change( nameof( OnBuffSynced ) )] public byte BuffSerial { get; set; }
+
+	/// <summary> bot 表情档（v0.7.8.36 像素风）：0=开心 1=兴奋(追猎) 2=惊恐(逃跑) 3=眩晕 4=瞌睡 5=得意(王牌追猎)。
+	/// host 的 BotBrain 写入（FromHost），NeonRenderer 每帧按 Mood 现画表情脸；真人球不参与 </summary>
+	[Sync( SyncFlags.FromHost )] public byte Mood { get; set; }
 
 	TimeSince _sinceBuff = 999f;
 
@@ -63,10 +76,10 @@ public sealed class Ball : Component
 	/// <summary> 背包第 slot 格（0=Q 槽 1=E 槽）的道具种类；255=空 </summary>
 	public byte PowerSlot( int slot ) => slot == 0 ? PowerA : PowerB;
 
-	/// <summary> host：道具入背包（找空 Q/E 槽，返回槽号 0/1；满返回 -1——道具留在场上） </summary>
+	/// <summary> 拾取入包（v0.7.8.30 起**只进 E 槽**——Q 改为随时间充能的技能位，不再接收拾取）；
+	/// E 满返回 -1（道具留在场上） </summary>
 	public int StorePower( byte kind )
 	{
-		if ( PowerA == 255 ) { PowerA = kind; return 0; }
 		if ( PowerB == 255 ) { PowerB = kind; return 1; }
 		return -1;
 	}
@@ -112,6 +125,9 @@ public sealed class Ball : Component
 
 	public float Radius => GameConfig.StartRadius * MathF.Sqrt( Mass / GameConfig.StartMass );
 
+	/// <summary> 当前速度（v0.7.8.32：bot 拦截预判按它打提前量；只读，BallInput 内部维护） </summary>
+	public Vector3 Velocity => _velocity;
+
 	/// <summary> 本条命已存活秒数（成就"存活 5 分钟"用；重生时 _sinceSpawn 归零） </summary>
 	public float LifeSeconds => _sinceSpawn;
 
@@ -125,19 +141,49 @@ public sealed class Ball : Component
 		{
 			var s = MathF.Max( GameConfig.MinSpeed,
 				GameConfig.BaseSpeed * MathF.Pow( GameConfig.StartMass / Mass, GameConfig.SpeedCurve ) );
-			return HasBuff( PowerUpManager.Kind.Speed ) ? s * GameConfig.PowerUpSpeedBoost : s;
+			if ( HasBuff( PowerUpManager.Kind.Speed ) ) s *= GameConfig.PowerUpSpeedBoost;
+			// 敌营大本营减速（M7.2 安全屋）；InHostileHq 对无队/非领土恒 false
+			if ( TerritoryManager.InHostileHq( TeamIndex, WorldPosition ) ) s *= GameConfig.TerritoryHqSlowFactor;
+			return s;
 		}
 	}
 
 	/// <summary> 是否出生保护中（虚环护盾表现，双向免战） </summary>
 	public bool IsProtected => _sinceSpawn < GameConfig.SpawnProtectSeconds;
 
+	/// <summary> 领土职业（M7.4，host 随机分配随复活重掷；255=无。0 指挥官 1 工兵 2 护卫 3 坦克） </summary>
+	[Sync( SyncFlags.FromHost )]
+	public byte TerritoryClass { get; set; } = 255;
+
+	TimeSince _sinceClassCast = 999f;   // 本地冷却估算（host 权威冷却在 ClassSkillManager，未好时静默拒绝）
+
+	/// <summary> 本地估算的职业冷却剩余秒（HUD Q 钮倒 sweep 用） </summary>
+	public float ClassCooldownRemaining =>
+		TerritoryClass > 3 ? 0f : MathF.Max( 0f, ClassSkillManager.CooldownOf( TerritoryClass ) - _sinceClassCast );
+
+	/// <summary> Q 施放职业技能（M7.4 领土）：本地即时反馈+冷却估算起表；host 直调 / 客户端发 RPC </summary>
+	void TryCastClassSkill()
+	{
+		if ( !Alive || TerritoryClass > 3 ) return;
+		if ( ClassCooldownRemaining > 0f ) return;
+
+		CircleroyaleGame.Current?.Hud?.AddBanner( ClassSkillManager.NameOf( TerritoryClass ) + "!", new Color( 0.98f, 0.83f, 0.35f ) );
+		GameSfx.Pickup();
+		CircleroyaleGame.Current?.Camera?.Shake( 5f );
+		_sinceClassCast = 0;   // 本地估算起表
+
+		if ( NetworkManager.IsAuthority )
+			ClassSkillManager.Cast( this );
+		else
+			NetworkManager.RequestClassSkill();
+	}
+
 	/// <summary> 球体背景填充色：真人=头像主色取样，bot=霓虹配色 </summary>
 	public Color BackgroundColor => _avatarColor ?? NeonColor;
 
 	Vector3 _velocity;
 	TimeSince _sinceSpawn;
-	SpriteRenderer _avatar;
+	TimeSince _sinceWallHit = 999f;    // 撞墙脉冲节流（贴墙滑行不连爆）
 	Color? _avatarColor;
 	Vector2 _botDir;
 	Vector2 _lastMoveDir = Vector2.Right;   // 静止时分裂/吐孢子的方向兜底
@@ -157,7 +203,7 @@ public sealed class Ball : Component
 	/// <summary>
 	/// host 侧标记：这颗球是为远程连接生成的（仅权威端有意义，不联网）。
 	/// ScanBalls/SetLocalBall 用它把远程球（含竞态下未网络化的幽灵球）排除出本机球候选，
-	// 否则同账号双开时幽灵球会顶掉 host 自己的球、相机来回跳（实测）。
+	/// 否则同账号双开时幽灵球会顶掉 host 自己的球、相机来回跳（实测）。
 	/// </summary>
 	public bool IsRemoteOwned { get; set; }
 
@@ -216,38 +262,18 @@ public sealed class Ball : Component
 		if ( !IsProxy && !IsBot )
 			CircleroyaleGame.Current?.SetLocalBall( this );
 
-		// 头像圆心（用户决策：头像作圆心，霓虹线条作外侧）
-		var go = new GameObject( true, "Avatar" );
-		go.Parent = GameObject;
-
-		_avatar = go.AddComponent<SpriteRenderer>();
-		_avatar.Lighting = false;
-		_avatar.Shadows = false;
-
 		TryLoadAvatar();
 	}
 
 	/// <summary>
-	/// 加载头像：bot 用占位图；真人按 OwnerSteamId 拉 Steam 头像
-	/// （下载有延迟，失败每秒重试，15 次后转占位图）。
+	/// 加载头像（真人按 OwnerSteamId 拉 Steam 头像：下载有延迟，失败每秒重试，15 次后转占位图；
+	/// 拿到后经 NeonRenderer.SetAvatar 登记独立贴图批次）。bot 表情脸由 NeonRenderer 按 Mood
+	/// 从 face_0..5 现画，不在这里加载。
 	/// </summary>
 	void TryLoadAvatar()
 	{
 		if ( IsBot )
 		{
-			// 几何图案头像：按名字+色号确定性生成（各端算出同一张，零同步）
-			if ( string.IsNullOrEmpty( PlayerName ) ) return;   // 名字同步未到，等重试
-
-			Texture tex = null;
-			try
-			{
-				tex = BotAvatar.GetOrCreate( PlayerName, ColorIndex );
-			}
-			catch ( Exception e )
-			{
-				Log.Warning( $"bot avatar generate failed for '{PlayerName}': {e.Message}" );
-			}
-			ApplyAvatarTexture( tex ?? Texture.Load( GameConfig.AvatarPlaceholderPath, false ) );
 			_avatarReady = true;
 			return;
 		}
@@ -257,21 +283,21 @@ public sealed class Ball : Component
 		var avatar = Texture.LoadAvatar( OwnerSteamId, 128 );
 		if ( avatar is null ) return;
 
-		ApplyAvatarTexture( avatar );
+		SetAvatarTexture( avatar );
 		_avatarReady = true;
 	}
 
-	void ApplyAvatarTexture( Texture tex )
+	/// <summary> 头像贴图登记进 NeonRenderer（渲染器未就绪时由其静态表待命，下一帧生效） </summary>
+	void SetAvatarTexture( Texture tex )
 	{
 		if ( tex is null )
 		{
-			Log.Warning( $"avatar load failed: '{PlayerName}' bot={IsBot} steam={OwnerSteamId}" );
-			_avatar.Enabled = false;
+			Log.Warning( $"avatar load failed: '{PlayerName}' steam={OwnerSteamId}" );
 			return;
 		}
 
-		_avatar.Sprite = Sprite.FromTexture( tex );   // Texture setter 已废弃，必须走 Sprite 资源
-		_avatarColor = IsBot ? null : SampleAverageColor( tex );
+		NeonRenderer.SetAvatar( OwnerSteamId, tex );
+		_avatarColor = SampleAverageColor( tex );
 	}
 
 	/// <summary> 头像主色：全图不透明像素的均值（用作球底填充色） </summary>
@@ -307,22 +333,13 @@ public sealed class Ball : Component
 	{
 		base.OnUpdate();
 
-		// 头像直径 = 半径（占玩家形状直径的 50%，用户指定），居中；
-		// 死亡时一并隐藏——此前只藏了霓虹环，头像方块留在原地像"尸体"（实测）
-		if ( _avatar.IsValid() )
-		{
-			var d = Radius;
-			_avatar.Size = new Vector2( d, d );
-			_avatar.Enabled = Alive;
-		}
-
-		// 头像重试：每秒一次，15 次未拿到转占位图（bot 也走：名字/色号同步可能晚于 OnStart）
+		// 头像重试：每秒一次，15 次未拿到转占位图（Steam 头像下载慢是常态）
 		if ( !_avatarReady && _sinceAvatarRetry > 1f )
 		{
 			_sinceAvatarRetry = 0;
 			if ( _avatarRetryCount++ >= 15 )
 			{
-				ApplyAvatarTexture( Texture.Load( GameConfig.AvatarPlaceholderPath, false ) );
+				SetAvatarTexture( Texture.Load( GameConfig.AvatarPlaceholderPath, false ) );
 				_avatarReady = true;
 			}
 			else
@@ -387,8 +404,17 @@ public sealed class Ball : Component
 
 		// 道具主动使用（v0.7.5.0）：Q/E 释放背包里的道具——权威端直接触发，客户端发 RPC。
 		// banner 按键即播（本地即时反馈，不等 host 往返）；槽位空则什么都不发生
-		UsePowerSlot( 0, Input.Keyboard.Pressed( "Q" ) );
-		UsePowerSlot( 1, Input.Keyboard.Pressed( "E" ) );
+			// Q 键（M7.4）：领土模式=职业技能（冷却制，PowerA 时间充能 pass 在领土下冻结）；
+			// 其他模式=充能道具槽（既有行为）。E 键道具照旧
+			if ( MatchState.IsTerritory )
+			{
+				if ( Input.Keyboard.Pressed( "Q" ) ) TryCastClassSkill();
+			}
+			else
+			{
+				UsePowerSlot( 0, Input.Keyboard.Pressed( "Q" ) );
+			}
+			UsePowerSlot( 1, Input.Keyboard.Pressed( "E" ) );
 	}
 
 	protected override void OnFixedUpdate()
@@ -408,7 +434,9 @@ public sealed class Ball : Component
 			_wasAlive = true;
 			_sinceSpawn = 0;          // 复活保护期（本地表现；权威保护期在 host 的 Init 里）
 			_velocity = Vector3.Zero;
-			WorldPosition = RandomSpawnPos();   // owner 自己随机换位（位置归 owner 模拟）
+			// owner 自己随机换位（位置归 owner 模拟）；领土模式默认回大本营，
+			// 死亡面板点 FRONT（M7.2）则换到最近己方占领格——偏好随点击存本机，此处消费
+			WorldPosition = RandomSpawnPos( TeamIndex, CircleroyaleGame.Current?.ConsumeFrontRespawn() ?? false, WorldPosition );
 			if ( GameSfx.IsMine( OwnerSteamId ) )   // 只播本机球：开局 32 个 bot 同帧生成曾叠 33 层音（v0.7.8.10 修）
 				GameSfx.Respawn( WorldPosition );
 			GameSfx.ResetEatCount();   // 下一条命吃食物音从 0 重新计
@@ -440,18 +468,122 @@ public sealed class Ball : Component
 
 		// 场地边界钳制（半径异常涨破场地时 half 兜底为 0，绝不让 Clamp 的 min>max 抛异常）
 		var half = MathF.Max( 0f, GameConfig.ArenaHalfSize - Radius );
+		var preX = pos.x;
+		var preY = pos.y;
 		pos.x = Math.Clamp( pos.x, -half, half );
 		pos.y = Math.Clamp( pos.y, -half, half );
 		pos.z = 0f;
 
 		WorldPosition = pos;
+
+		// 撞墙脉冲（v0.7.8.78）：钳制真把位置按住 + 撞击速度够 + 节流，接触点来一圈扩散环。
+		// 各端本地触发（真人 owner 机 / bot host 机），特效不做网络广播
+		if ( _sinceWallHit > GameConfig.WallHitFxCooldown )
+		{
+			Vector3 contact;
+			var hit = false;
+
+			if ( preX != pos.x && MathF.Abs( _velocity.x ) > GameConfig.WallHitFxMinSpeed )
+			{
+				hit = true;
+				contact = new Vector3( MathF.Sign( pos.x ) * ( GameConfig.ArenaHalfSize - 2f ), pos.y, 0f );
+			}
+			else if ( preY != pos.y && MathF.Abs( _velocity.y ) > GameConfig.WallHitFxMinSpeed )
+			{
+				hit = true;
+				contact = new Vector3( pos.x, MathF.Sign( pos.y ) * ( GameConfig.ArenaHalfSize - 2f ), 0f );
+			}
+			else
+			{
+				contact = Vector3.Zero;
+			}
+
+			if ( hit )
+			{
+				_sinceWallHit = 0;
+				NeonRenderer.WallPulse( contact, NeonColor );
+			}
+		}
+
+		// 球体推挤（v0.7.8.24 球球大作战手感）：吃不动对方=实心——推出与敌方的重叠
+		ApplyPush( half );
 	}
 
-	/// <summary> 场地内出生点（owner 复活时本地选位）：走游戏系统的安全采样，无系统时纯随机兜底 </summary>
-	static Vector3 RandomSpawnPos()
+	/// <summary>
+	/// 球体推挤（v0.7.8.24 球球大作战手感）：**各自把自己推出重叠**——对方 bot/host 球走同代码路径、
+	/// 真人球由其主人推，双方按质量权重让位，一帧内收敛到分离，不需要位置权威仲裁。
+	/// 队友与自己的身体不推（BoB 惯例可重叠）；能吃/被吃时不推（吃归 host 权威，吃了就不存在重叠）；
+	/// 尖刺分身是武器不推（碰到走武器判定）；孢子不推。位置是 owner 权威，推完自动同步
+	/// </summary>
+	void ApplyPush( float half )
 	{
 		var game = CircleroyaleGame.Current;
-		if ( game is not null ) return game.RandomSpawnPos();
+		if ( game is null ) return;
+
+		foreach ( var b in game.Balls )
+		{
+			if ( b is null || !b.IsValid() || !b.Alive || b == this ) continue;
+			if ( b.OwnerSteamId == OwnerSteamId ) continue;
+			if ( game.SameTeamSteam( OwnerSteamId, b.OwnerSteamId ) ) continue;
+
+			var hi = MathF.Max( Mass, b.Mass );
+			var lo = MathF.Min( Mass, b.Mass );
+			if ( hi >= lo * GameConfig.EatRatio ) continue;   // 能吃就吃（host 权威），不推
+
+			var dx = WorldPosition.x - b.WorldPosition.x;
+			var dy = WorldPosition.y - b.WorldPosition.y;
+			var rr = Radius + b.Radius;
+			var d2 = dx * dx + dy * dy;
+			if ( d2 >= rr * rr ) continue;
+			var d = MathF.Sqrt( MathF.Max( d2, 0.0001f ) );
+			var nx = d > 0.001f ? dx / d : 1f;
+			var ny = d > 0.001f ? dy / d : 0f;
+			// 完全重合兜底：推满 rr 的一半；正常情况推"重叠 × 对方质量占比"（越重让得越少）
+			var push = d > 0.001f ? MathF.Min( rr - d, GameConfig.PushMaxStep ) * ( b.Mass / ( Mass + b.Mass ) ) : rr * 0.5f;
+
+			WorldPosition = new Vector3(
+				Math.Clamp( WorldPosition.x + nx * push, -half, half ),
+				Math.Clamp( WorldPosition.y + ny * push, -half, half ), 0f );
+		}
+
+		// 敌方分身=实心障碍（自己不动，我让路全额推；能吃时不推——host 会吃掉它）
+		foreach ( var c in game.Cells )
+		{
+			if ( c.PieceKind != CellPiece.Kind.SplitPiece ) continue;
+			if ( c.OwnerSteamId == OwnerSteamId ) continue;
+			if ( game.SameTeamSteam( OwnerSteamId, c.OwnerSteamId ) ) continue;
+			if ( Mass >= c.Mass * GameConfig.EatRatio ) continue;
+
+			var dx = WorldPosition.x - c.Pos.x;
+			var dy = WorldPosition.y - c.Pos.y;
+			var rr = Radius + c.Radius;
+			var d2 = dx * dx + dy * dy;
+			if ( d2 >= rr * rr ) continue;
+			var d = MathF.Sqrt( MathF.Max( d2, 0.0001f ) );
+			var nx = d > 0.001f ? dx / d : 1f;
+			var ny = d > 0.001f ? dy / d : 0f;
+			var push = d > 0.001f ? MathF.Min( rr - d, GameConfig.PushMaxStep ) : rr * 0.5f;
+
+			WorldPosition = new Vector3(
+				Math.Clamp( WorldPosition.x + nx * push, -half, half ),
+				Math.Clamp( WorldPosition.y + ny * push, -half, half ), 0f );
+		}
+	}
+
+	/// <summary> 场地内出生点（owner 复活时本地选位）：走游戏系统的安全采样，无系统时纯随机兜底。
+	/// 领土模式（M7）：有队号就回己方大本营采样；frontLine=true（M7.2 二选一）换最近己方占领格 </summary>
+	static Vector3 RandomSpawnPos( int teamIndex = -1, bool frontLine = false, Vector3 nearPos = default )
+	{
+		var game = CircleroyaleGame.Current;
+		if ( game is not null ) return game.RandomSpawnPos( teamIndex, frontLine, nearPos );
+
+		if ( MatchState.IsTerritory && teamIndex >= 0 )
+		{
+			if ( frontLine && TerritoryManager.TryFrontSpawn( teamIndex, nearPos, out var front ) )
+				return front;
+			TerritoryManager.HqBounds( teamIndex, out var minX, out var maxX, out var minY, out var maxY );
+			return new Vector3( Game.Random.Float( minX, maxX ), Game.Random.Float( minY, maxY ), 0f );
+		}
 
 		var half = GameConfig.ArenaHalfSize - 128f;
 		return new Vector3( Game.Random.Float( -half, half ), Game.Random.Float( -half, half ), 0f );

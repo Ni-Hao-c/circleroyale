@@ -23,6 +23,15 @@ public sealed class CellPiece
 	/// <summary> 主人 SteamId（bot 为 0；bot 不分裂，此字段仅真人有值） </summary>
 	public long OwnerSteamId;
 
+	/// <summary> 主人队伍号（-1 无队；host 出生时记一次，领土喂旗计分用，免逐帧查表） </summary>
+	public int TeamIndex = -1;
+
+	/// <summary> 锚定不动（M7.4 护卫固守尖刺）：不跟随主人、无转向 </summary>
+	public bool Anchored;
+
+	/// <summary> 存在时长覆盖（秒；小于 0 = 用 Kind 默认寿命）——护卫尖刺 8s / 道具尖刺 20s（M7.4） </summary>
+	public float MaxLife = -1f;
+
 	public int ColorIndex;
 
 	public float Mass;
@@ -52,11 +61,25 @@ public sealed class CellPiece
 	public float Speed => MathF.Max( GameConfig.MinSpeed,
 		GameConfig.BaseSpeed * MathF.Pow( GameConfig.StartMass / MathF.Max( 1f, Mass ), GameConfig.SpeedCurve ) );
 
-	/// <summary> 合并冷却时长（秒）：主动分裂用全局 15s；撞刺炸出的碎片用短冷却（SpikePieceMergeCooldown） </summary>
-	public float MergeCooldown = GameConfig.MergeCooldownSeconds;
+	/// <summary> 合并冷却时长（秒）：主动分裂按质量曲线（MergeCooldownFor）；撞刺碎片短冷却（SpikePieceMergeCooldown） </summary>
+	public float MergeCooldown = GameConfig.MergeCooldownBase;
 
 	/// <summary> 合并冷却是否已过（仅分身有意义） </summary>
 	public bool IsMergeReady => SinceSpawn > MergeCooldown;
+}
+
+/// <summary>
+/// 刺爆弹幕（v0.7.8.24）：喂刺喂满后从刺射出的尖刺弹。host 权威模拟（含命中判定），
+/// 客户端为纯视觉弹道镜像（SpineDir 公式双端一致，视觉弹道=权威弹道）。
+/// </summary>
+public sealed class SpikeSpine
+{
+	public Vector2 Pos;
+
+	public Vector2 Vel;
+
+	/// <summary> 出生时刻（SpineLife 到期消散） </summary>
+	public TimeSince SinceSpawn;
 }
 
 /// <summary> CellsState RPC 的线格式（全 blittable 字段，同 FoodData 模式） </summary>

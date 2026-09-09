@@ -11,6 +11,7 @@ public sealed class EndBoard : PanelComponent
 {
 	Label _title;
 	Label _winner;
+	Image _crown;    // 冠军皇冠（v0.7.8.38 像素风）：悬在 winner 行上方居中
 	Label _matchHead;
 	Label[] _matchRows;
 	Label _selfRow;
@@ -61,6 +62,14 @@ public sealed class EndBoard : PanelComponent
 
 		_winner = NewRow( root, 166f, 360f, 1200f, "eb-winner" );
 
+		_crown = new Image();
+		_crown.Texture = Texture.Load( "ui/pixel/crown.png" );
+		_crown.Style.Position = PositionMode.Absolute;
+		_crown.Style.Width = 22f;
+		_crown.Style.Height = 22f;
+		_crown.Style.Display = DisplayMode.None;
+		root.AddChild( _crown );
+
 		_matchHead = NewRow( root, 244f, 260f, 580f, "eb-head" );
 		_matchHead.Text = "MATCH RANKING";
 
@@ -92,12 +101,14 @@ public sealed class EndBoard : PanelComponent
 		_built = true;
 	}
 
-	/// <summary> 建一行 Label：列内居中（left..left+width），行号定 top </summary>
+	/// <summary> 建一行 Label：left/width 是 1920 设计稿坐标，换算成"中心锚定 + 相对偏移"——
+	/// 任意分辨率下整体保持居中（left:960 定位在窄窗口会整体偏右，实测） </summary>
 	Label NewRow( Panel root, float top, float left, float width, string classes )
 	{
 		var l = new Label() { Classes = classes };
 		l.Style.Position = PositionMode.Absolute;
-		l.Style.Left = left;
+		l.Style.Left = Length.Percent( 50f );
+		l.Style.MarginLeft = left - 960f;
 		l.Style.Width = width;
 		l.Style.Top = top;
 		root.AddChild( l );
@@ -142,6 +153,23 @@ public sealed class EndBoard : PanelComponent
 
 		if ( !MatchState.IsTeam )
 			return $"WINNER — {rows[0].Name}   ({rows[0].Mass:0})";
+
+		// 领土战争（M7.4 积分制）：胜负按占旗积分（host 排序同源，这里只取文案）
+		if ( MatchState.IsTerritory )
+		{
+			int bestT = -1;
+			float bestPts = -1f;
+			for ( var t = 0; t < 4; t++ )
+			{
+				var pts = TerritoryManager.Points( t );
+				if ( pts > bestPts )
+				{
+					bestPts = pts;
+					bestT = t;
+				}
+			}
+			return $"TEAM {bestT + 1} WINS   ({bestPts:0} PTS)";
+		}
 
 		// 团队赛：胜负按队伍 3 人总分
 		var totals = new Dictionary<int, float>();
@@ -190,7 +218,7 @@ public sealed class EndBoard : PanelComponent
 			row.Text = RowText( $"{i + 1}.", r.Name, $"{r.Mass:0}", r.Team );
 
 			bool isSelf = r.SteamId == _mySteamId && !r.Bot;
-			row.Style.FontColor = isSelf ? new Color( 0.21f, 0.94f, 1f ) : new Color( 1f, 1f, 1f, 0.78f );
+			row.Style.FontColor = isSelf ? new Color( 0.898f, 0.282f, 0.553f ) : new Color( 0.29f, 0.23f, 0.39f, 0.85f );
 		}
 
 		// 榜外自身行
@@ -273,6 +301,20 @@ public sealed class EndBoard : PanelComponent
 
 		Animate( _globalNote, t, GlobalDelay + _globalRows.Length * GlobalStagger );
 		Animate( _back, t, GlobalDelay + _globalRows.Length * GlobalStagger + 0.3f );
+
+		// 皇冠悬在冠军行正上方（winner 是定宽居中行，文字中心恒 960；透明度随其入场动画）
+		if ( _crown.IsValid() )
+		{
+			var show = _winner.IsValid() && !string.IsNullOrEmpty( _winner.Text );
+			_crown.Style.Display = show ? DisplayMode.Flex : DisplayMode.None;
+			if ( show )
+			{
+				_crown.Style.Left = Length.Percent( 50f );   // 冠军行中心锚定后皇冠跟随面板中心
+				_crown.Style.MarginLeft = -11f;      // 22px 宽的半个
+				_crown.Style.Top = 138f + MathF.Sin( t * 3f ) * 4f;
+				_crown.Style.Opacity = _winner.Style.Opacity;
+			}
+		}
 
 		// 自动返回（v0.6.4.2）：结算显示 10 秒后回大厅（多人）/主菜单（单机），空格可提前
 		var remain = GameConfig.SettlementAutoReturnSeconds - _sinceShow;

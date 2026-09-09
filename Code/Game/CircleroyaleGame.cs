@@ -15,6 +15,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	LobbyPanel _lobby;
 	RoomBrowser _browser;
 	SettingsPanel _settings;
+	RankingsPanel _rankings;
 	FoodManager _food;
 	PowerUpManager _power;
 	NetworkManager _net;
@@ -22,20 +23,29 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 
 	readonly List<Ball> _balls = new();
 	readonly Dictionary<Guid, Vector3> _lastPos = new();   // host 位移校验用
+	readonly Dictionary<Guid, TimeSince> _teleportGrace = new();   // host：合法瞬移（重生换位/晋升）后的校验宽限期
 	TimeSince _sinceScan = 1f;         // 球注册扫描
 	TimeSince _sinceFoodRequest = 1f;  // 客户端请求食物全量的节流（首帧即请求）
 	TimeSince _sinceMatchTick = 1f;    // 倒计时 1Hz 校时广播
+	TimeSince _sinceTerritoryWire = 1f;   // 领土状态变化广播节流（5Hz 上限 + 2s 保活）
+	bool _pendingFrontRespawn;            // 本机下次复活的前线偏好（领土 M7.2，owner 换位时消费）
 	int _botNameIndex;
 	int _teamSeq;                      // 团队赛轮转分队计数（开局重置）
 
 	// ---- 分身/孢子（M3，纯数据实体见 CellPiece）----
 	readonly List<CellPiece> _cells = new();                    // host 权威模拟；客户端镜像（CellsState RPC）
 	readonly Dictionary<Guid, Vector2> _steerDir = new();       // host：每球平滑转向（分身跟随用）
+	readonly Dictionary<long, int> _teamScratch = new();        // 团队赛阵营映射复用缓冲（每帧 3 处先后构建，省堆分配）
+	readonly Dictionary<int, CellWire> _wireById = new();       // CellsState 应用缓冲（按 Id O(1) 查找）
+	readonly HashSet<int> _cellIdScratch = new();               // CellsState 新增判定缓冲
 	readonly Dictionary<Guid, TimeSince> _sinceEject = new();   // host：吐孢子节流
 	TimeSince _sinceCellSync = 1f;
+	TimeSince _sinceCellHeal;        // 分身主人失联自愈的 ScanBalls 节流（独立计时，别挪用 _sinceScan 打乱球扫描节奏）
 	bool _cellsDirty;                                           // 增删标记（列表清空后还要补发一次空快照）
 	int _nextCellId = 1;
 	Vector2[] _spikes;                                          // 绿刺位置（host 生成；客户端经 SpikesFull 同步）
+	float[] _spikeFed;                                          // 每朵刺累计喂入质量（host 权威；客户端 SpikeFed RPC 镜像，v0.7.8.24）
+	readonly List<SpikeSpine> _spines = new();                  // 刺爆弹幕：host=权威模拟（含命中），客户端=纯视觉弹道（v0.7.8.24）
 
 	/// <summary> 全部球（真人 + bot） </summary>
 	public IReadOnlyList<Ball> Balls => _balls;
@@ -57,6 +67,13 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 
 	/// <summary> 绿刺位置（静态障碍；host 生成，客户端经 SpikesFull 全量同步） </summary>
 	public Vector2[] Spikes => _spikes;
+
+	/// <summary> 刺的累计喂食量（0~SpikeGrowTarget，渲染长大用；host 权威，客户端经 SpikeFed RPC 镜像） </summary>
+	public float SpikeFedAt( int index ) =>
+		_spikeFed is not null && (uint)index < (uint)_spikeFed.Length ? _spikeFed[index] : 0f;
+
+	/// <summary> 刺爆弹幕（渲染读；host 权威模拟含命中，客户端为纯视觉弹道） </summary>
+	public IReadOnlyList<SpikeSpine> Spines => _spines;
 
 	/// <summary> HUD（提供屏幕光标桥接等） </summary>
 	public GameHud Hud => _hud;
@@ -280,6 +297,9 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			}
 		}
 
+		// 刺爆弹幕（客户端）：纯视觉弹道推进（host 在 TickSpikes 权威模拟+命中）
+		if ( !NetworkManager.IsAuthority ) TickSpinesVisual();
+
 		// 细胞渲染位置平滑：host 逐帧权威位置直接贴齐；客户端把 15Hz 快照插顺
 		if ( _cells.Count > 0 )
 		{
@@ -311,6 +331,36 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		}
 
 		TickRespawn();
+		TickTerritory();
+	}
+
+	/// <summary> 领土模式每帧（M7）：host 检查征服胜利 + 变化/保活广播 5Hz 快照；客户端只等 ApplyRemote。
+	/// 终局快照先行——客户端结算榜按领土胜负显示，慢一拍就会按旧格数判错冠军 </summary>
+	void TickTerritory()
+	{
+		if ( !MatchState.IsTerritory || MatchState.MatchOver ) return;
+
+		if ( !NetworkManager.IsAuthority )
+		{
+			_sinceTerritoryWire = 1f;
+			return;
+		}
+
+		TerritoryManager.TickPoints( Time.Delta );   // 占旗积分（每旗每 3s +1，M7.4 用户定稿）
+		ClassSkillManager.Tick();                    // 坦克临时质量到期回收
+
+		if ( TerritoryManager.ConquerWinner >= 0 )
+		{
+			NetworkManager.TerritoryState( TerritoryManager.Snapshot(), TerritoryManager.PointsWire() );
+			EndMatch();
+			return;
+		}
+
+		if ( TerritoryManager.NeedsSync || _sinceTerritoryWire > 2f )
+		{
+			_sinceTerritoryWire = 0;
+			NetworkManager.TerritoryState( TerritoryManager.Snapshot(), TerritoryManager.PointsWire() );
+		}
 	}
 
 	// ---- 吃与成长 ----
@@ -345,6 +395,25 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 						GameSfx.EatFood( new Vector3( foods[i].Pos.x, foods[i].Pos.y, 0f ) );
 				}
 			}
+		}
+
+		// 质量衰减（v0.7.8.24 球球大作战手感）：大球持续掉重，压制滚雪球、逼大哥不停行动。
+		// 小球免衰减；分身同率（TickCells）。Mass 是 [Sync(FromHost)]，衰减值自动下发。
+		// 领土模式（M7 用户定稿②）：己方球在己方大本营内免衰减（回家保养的拉扯点）
+		foreach ( var b in _balls )
+		{
+			if ( !b.IsValid() || !b.Alive ) continue;
+			if ( b.Mass > GameConfig.MassDecayMinMass
+				&& !( GameConfig.TerritoryHqStopsDecay && TerritoryManager.IsOwnHq( b.TeamIndex, b.WorldPosition ) ) )
+				b.Mass = MathF.Max( GameConfig.MassDecayMinMass, b.Mass - b.Mass * GameConfig.MassDecayPerSecond * Time.Delta );
+		}
+
+		// 敌营安全屋（M7.2）：敌方球闯大本营持续掉重——驱赶而不处刑（下限出生质量）
+		foreach ( var b in _balls )
+		{
+			if ( !b.IsValid() || !b.Alive ) continue;
+			if ( TerritoryManager.InHostileHq( b.TeamIndex, b.WorldPosition ) )
+				b.Mass = MathF.Max( GameConfig.StartMass, b.Mass - b.Mass * GameConfig.TerritoryHqHurtPerSecond * Time.Delta );
 		}
 
 		// 球 × 球：触碰即吃（质量比门槛；护盾期/死亡免战）。
@@ -420,7 +489,12 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			}
 		}
 
-		// 孢子被吞：球/分身碰到就吃（吐出 0.5s 后才可食，防秒吃自己刚吐的）
+		// 队伍映射（团队赛）：孢子可食延迟分档 + 下方球×分身免伤共用
+		var teamOf = BuildTeamMap();
+
+		// 孢子被吞：自己+队友 0.2s 档（v0.7.8.22/23 用户定稿，球球大作战式短时互喂——
+		// 自己马上回收、喂队友大哥跟自食一样顺）；敌人 0.5s 档。0.2s 只是出生净空：
+		// 大球吐的孢子半径可超过 16px 出生偏移，零延迟会被吐出者出生同帧吸回，吐丝直接失效
 		for ( int i = _cells.Count - 1; i >= 0; i-- )
 		{
 			var blob = _cells[i];
@@ -457,11 +531,11 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 				}
 			}
 
-			if ( blob.SinceSpawn < GameConfig.EjectedEdibleDelay ) continue;
-
 			foreach ( var b in _balls )
 			{
 				if ( !b.IsValid() || !b.Alive ) continue;
+				var ally = SameSide( blob.OwnerSteamId, b.OwnerSteamId, teamOf );
+				if ( blob.SinceSpawn < ( ally ? GameConfig.EjectedAllyEdibleDelay : GameConfig.EjectedEdibleDelay ) ) continue;
 				if ( b.WorldPosition.Distance( blob.Pos ) < b.Radius + blob.Radius )
 				{
 					b.Mass = MathF.Min( GameConfig.MaxMass, b.Mass + blob.Mass );
@@ -474,6 +548,8 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 				foreach ( var c in _cells )
 				{
 					if ( c.PieceKind != CellPiece.Kind.SplitPiece || c == blob ) continue;
+					var ally = SameSide( blob.OwnerSteamId, c.OwnerSteamId, teamOf );
+					if ( blob.SinceSpawn < ( ally ? GameConfig.EjectedAllyEdibleDelay : GameConfig.EjectedEdibleDelay ) ) continue;
 					if ( c.Pos.Distance( blob.Pos ) < c.Radius + blob.Radius )
 					{
 						c.Mass = MathF.Min( GameConfig.MaxMass, c.Mass + blob.Mass );
@@ -491,15 +567,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		}
 
 		// 跨主人：球 × 分身（同主人碰撞走 TickCells 的合并，不在这里）
-		// 队友免伤（v0.6.5.0）：团队赛下分身不与队友的主球互吃——按主人查队伍
-		var teamOf = new Dictionary<long, int>();
-		if ( MatchState.IsTeam )
-		{
-			foreach ( var b in _balls )
-			{
-				if ( b.IsValid() && b.TeamIndex >= 0 ) teamOf[b.OwnerSteamId] = b.TeamIndex;
-			}
-		}
+		// 队友免伤（v0.6.5.0）：团队赛下分身不与队友的主球互吃——teamOf 已在上方建好
 
 		for ( int i = 0; i < _balls.Count; i++ )
 		{
@@ -586,15 +654,18 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		}
 	}
 
-	/// <summary> bot 死亡后原地复活（不再销毁重建——进行中 NetworkSpawn 不复制到已连接客户端，实测） </summary>
+	/// <summary> bot 死亡后原地复活（不再销毁重建——进行中 NetworkSpawn 不复制到已连接客户端，实测）
+	/// ⚠️ 蛰伏球（Dormant）不是死亡——复活它=凭空多出无队 FFA bot（v0.7.8.25 修） </summary>
 	void TickBots()
 	{
 		foreach ( var b in _balls )
 		{
 			if ( !b.IsValid() || !b.IsBot || b.Alive ) continue;
+			if ( b.Dormant ) continue;   // 蛰伏备用球：等开局激活，绝不自动复活
 			if ( b.SinceDeath < GameConfig.BotRespawnSeconds ) continue;
 
-			RespawnBall( b );
+			// 领土模式 bot 自动上前线（M7.2）：没前线格时 TryFrontSpawn 内部回落大本营
+			RespawnBall( b, frontLine: MatchState.IsTerritory );
 		}
 	}
 
@@ -609,8 +680,9 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 
 	/// <summary> 本机重生请求（空格 / 死亡面板点击共用）：权威端直接原地复活；
 	/// 客户端发静态 RPC（host 端 Rpc.Caller 找回连接，Alive 同步下发）。
+	/// 领土模式 frontLine=true 复活到最近己方占领格（M7.2 二选一，默认大本营）。
 	/// 菜单/房间阶段不受理（蛰伏球是死的，但比赛没开始；空格在结算面板另有用途） </summary>
-	public void TryRespawnLocal()
+	public void TryRespawnLocal( bool frontLine = false )
 	{
 		if ( !_gameStarted || MatchState.MatchOver ) return;
 		if ( !LocalBall.IsValid() || LocalBall.Alive ) return;
@@ -618,26 +690,54 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		GameLog.Info( "[game] local respawn requested" );
 		if ( NetworkManager.IsAuthority )
 		{
-			RespawnBall( LocalBall );
+			RespawnBall( LocalBall, frontLine: frontLine );
 		}
 		else
 		{
-			NetworkManager.RequestRespawn();
+			// 远程球的位置由 owner 自己算（Alive 翻转后本地换位）——前线偏好随点击存本机，host 传参无意义
+			_pendingFrontRespawn = frontLine;
+			NetworkManager.RequestRespawn( frontLine );
 		}
+	}
+
+	/// <summary> 取走本机下次复活的"前线"偏好（owner 换位时用；每次重生请求都会重写，消费即清） </summary>
+	public bool ConsumeFrontRespawn()
+	{
+		var v = _pendingFrontRespawn;
+		_pendingFrontRespawn = false;
+		return v;
 	}
 
 	/// <summary> 原地复活一颗球：重置数值 + Alive=true（同步下发；对象永不销毁）。
 	/// teamIndex ≥ 0 时重写队伍号（开局激活时的团队分配；普通赛 -1 不动）。
+	/// 领土模式 frontLine=true 复活到最近己方占领格（M7.2 二选一），否则大本营。
 	/// cue=false 用于开局批量激活（提示音只用于比赛中的复活，v0.7.8.11） </summary>
-	void RespawnBall( Ball ball, int teamIndex = -1, bool cue = true )
+	void RespawnBall( Ball ball, int teamIndex = -1, bool cue = true, bool frontLine = false )
 	{
 		ball.Mass = GameConfig.StartMass;
+		// 团队赛兜底（v0.7.8.25）：无队球（蛰伏误复活/历史异常态）复活时补编队，绝不带 T=-1 上场
+		if ( teamIndex < 0 && MatchState.IsTeam && ball.TeamIndex < 0 )
+			teamIndex = NextTeamIndex();
 		ball.Init( ball.IsBot, teamIndex );   // 重置保护期/速度/颜色（同步下发）
+		ball.Dormant = false;
 		ball.Alive = true;
+
+		// 领土职业（M7.4）：系统随机分配，每次复活重掷——"由系统决定"且无跨局残留态
+		if ( MatchState.IsTerritory )
+			ball.TerritoryClass = (byte)Game.Random.Int( 0, 3 );
 
 		// host 自己的球/bot：直接换位；真人客户端的球：该客户端在 Alive→true 时自行随机换位（owner 模拟）
 		if ( ball.IsBot || ball.OwnerSteamId == Game.SteamId.Value )
-			ball.WorldPosition = RandomSpawnPos();
+		{
+			// nearPos 取死亡位置（此刻还没被覆盖）——前线复活挑最近的占领格（M7.2）
+			ball.WorldPosition = RandomSpawnPos( ball.TeamIndex, frontLine, ball.WorldPosition );
+		}
+		else
+		{
+			// 远程球：host 不代换位，owner 收到 Alive 后自行瞬移——开位移校验宽限期，
+			// 否则 owner 的干级别位置更新会被 TickMovementValidation 永久拉回旧处（v0.7.8.33 修）
+			_teleportGrace[ball.Id] = 0;
+		}
 
 		GameLog.Info( $"[net] respawned '{ball.PlayerName}'" );
 
@@ -720,6 +820,20 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		var arr = rows.ToArray();
 		Array.Sort( arr, ( x, y ) => y.Mass.CompareTo( x.Mass ) );
 
+		// 领土模式（M7.4 积分制）：名次按占旗积分（征服=占满全部可占领格），积分同分比格数再比质量；
+		// 终局快照先行——客户端结算按领土胜负显示，慢一拍就会按旧格数判错冠军
+		if ( MatchState.IsTerritory )
+		{
+			NetworkManager.TerritoryState( TerritoryManager.Snapshot(), TerritoryManager.PointsWire() );
+			Array.Sort( arr, ( x, y ) =>
+			{
+				var byPts = TerritoryManager.Points( y.Team ).CompareTo( TerritoryManager.Points( x.Team ) );
+				if ( byPts != 0 ) return byPts;
+				var byCells = TerritoryManager.OwnedCount( y.Team ).CompareTo( TerritoryManager.OwnedCount( x.Team ) );
+				return byCells != 0 ? byCells : y.Mass.CompareTo( x.Mass );
+			} );
+		}
+
 		NetworkManager.MatchOver( arr );   // 客户端展示用
 		OnMatchOverRemote( arr );          // host 立即落地（广播回声被 MatchOver 守卫挡掉）
 
@@ -740,7 +854,8 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			local.IsValid() ? local.PlayerName : "" );
 		LocalBoard.Record( standings );
 		ScoreUploader.SubmitOwn( standings, this );
-		GameAchievements.Settlement( standings, local.IsValid() ? local.OwnerSteamId : 0 );   // 成就：夺冠/登顶（v0.7.8.13）
+		bool won = GameAchievements.Settlement( standings, local.IsValid() ? local.OwnerSteamId : 0 );   // 成就：夺冠/登顶
+		GameXp.Settlement( standings, local.IsValid() ? local.OwnerSteamId : 0, won );                    // 经验结算上报（v0.7.8.19）
 		GameLog.Info( $"[match] settlement shown ({standings?.Length ?? 0} rows)" );
 	}
 
@@ -757,6 +872,12 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	{
 		var eater = FindBallBySteamId( eaterSteamId );
 		var eaten = FindBallBySteamId( eatenSteamId );
+
+		// 吞球滑入（v0.7.8.28 juice）：双端统一入口——被吃者缩团滑进吃者嘴里。
+		// 分身反吞主球时 eater 是其主球（取不到具体分身），滑向其主队身体，观感为"被收编"
+		if ( eater.IsValid() && eaten.IsValid() )
+			NeonRenderer.Swallow( eaten.WorldPosition, eaten.ColorIndex, eater.WorldPosition, eaten.Radius );
+
 		if ( GameSfx.IsMine( eaterSteamId ) || GameSfx.IsMine( eatenSteamId ) )
 			GameSfx.EatBall( eaten.IsValid() ? eaten.WorldPosition : Vector3.Zero );
 
@@ -780,7 +901,10 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			massGained, eaterSteamId, eatenSteamId );
 	}
 
-	/// <summary> host 位移校验：远端模拟的球单帧位移超理论上限 3 倍即拉回（反瞬移橡皮筋） </summary>
+	/// <summary> host 位移校验：远端模拟的球单帧位移超理论上限 3 倍即拉回（反瞬移橡皮筋）。
+	/// 合法瞬移（重生换位/分身晋升）有 TeleportGraceSeconds 宽限——窗口内放行 owner 的
+	/// 干级别位置更新并持续锚定 _lastPos，窗口一过恢复常规校验（v0.7.8.33 修"晋升/重生后
+	/// host 端球位被钉死在旧处"：此前 _lastPos 从不随瞬移重置，owner 的每次更新都被拉回） </summary>
 	void TickMovementValidation()
 	{
 		var mySteamId = Game.SteamId.Value;
@@ -791,7 +915,14 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			var key = b.Id;
 			var last = _lastPos.TryGetValue( key, out var lp ) ? lp : b.WorldPosition;
 
-			if ( !b.IsBot && b.OwnerSteamId != mySteamId )
+			bool grace = _teleportGrace.TryGetValue( key, out var g );
+			if ( grace && g > GameConfig.TeleportGraceSeconds )
+			{
+				_teleportGrace.Remove( key );
+				grace = false;
+			}
+
+			if ( !grace && !b.IsBot && b.OwnerSteamId != mySteamId )
 			{
 				var maxMove = b.Speed * Time.Delta * 3f + 16f;
 				if ( b.WorldPosition.Distance( last ) > maxMove )
@@ -800,7 +931,10 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 
 			_lastPos[key] = b.WorldPosition;
 
-			// 转向方向（分身跟随用）：取本帧位移方向平滑；静止时保持原方向
+			// 转向方向（分身跟随用）：取本帧位移方向平滑；静止时保持原方向。
+			// 宽限期内位移是瞬移跳变，不代表真实航向，跳过
+			if ( grace ) continue;
+
 			var delta = b.WorldPosition - last;
 			if ( delta.Length > 0.1f )
 			{
@@ -886,16 +1020,29 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 
 	/// <summary> 场地内随机出生点：**agar 式安全出生**——采样多点，选离"能吃掉出生质量"的
 	/// 最近威胁最远的点。随机裸生会被路过的中 bot 秒吃（实测：加入 1.6s 被吃） </summary>
-	public Vector3 RandomSpawnPos()
+	/// <summary> 场地内出生点：走游戏系统的安全采样。领土模式（M7）给队号时在大本营格内采样（出生即回营）。
+	/// teamIndex 小于 0 或非领土模式 = 全场随机（既有行为） </summary>
+	/// <summary> 场地内出生点：走游戏系统的安全采样。领土模式（M7）给队号时在大本营格内采样；
+	/// frontLine=true（M7.2 复活二选一）改最近己方占领格（没有前线格回落大本营）。
+	/// teamIndex 小于 0 或非领土模式 = 全场随机（既有行为） </summary>
+	public Vector3 RandomSpawnPos( int teamIndex = -1, bool frontLine = false, Vector3 nearPos = default )
 	{
 		var half = GameConfig.ArenaHalfSize - 128f;
 
-		Vector3 best = new Vector3( Game.Random.Float( -half, half ), Game.Random.Float( -half, half ), 0f );
+		float minX = -half, maxX = half, minY = -half, maxY = half;
+		if ( MatchState.IsTerritory && teamIndex >= 0 )
+		{
+			if ( frontLine && TerritoryManager.TryFrontSpawn( teamIndex, nearPos, out var front ) )
+				return front;
+			TerritoryManager.HqBounds( teamIndex, out minX, out maxX, out minY, out maxY );
+		}
+
+		Vector3 best = new Vector3( Game.Random.Float( minX, maxX ), Game.Random.Float( minY, maxY ), 0f );
 		var bestScore = float.MinValue;
 
 		for ( int i = 0; i < GameConfig.SpawnSafeSamples; i++ )
 		{
-			var p = new Vector3( Game.Random.Float( -half, half ), Game.Random.Float( -half, half ), 0f );
+			var p = new Vector3( Game.Random.Float( minX, maxX ), Game.Random.Float( minY, maxY ), 0f );
 			var score = float.MaxValue;
 
 			foreach ( var b in _balls )
@@ -938,25 +1085,50 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		{
 			var c = _cells[i];
 
-			// 主人球没了（被吃死亡/断线销毁）→ 分身/尖刺分身一并消散（孢子中性存活，不清理）
+			// 主人球引用失效（热重载换程序集对象 / 主人真没了）→ 先按 SteamId 重挂自愈
+			// （v0.7.8.29：热重载会把组件换成新程序集对象，旧 OwnerBall 引用全失效，
+			// 旧逻辑直接消散 = 每次热重载分身凭空蒸发）；重挂不上才消散（孢子中性存活，不清理）
 			if ( c.PieceKind != CellPiece.Kind.EjectedMass
 				&& ( !c.OwnerBall.IsValid() || !c.OwnerBall.Alive ) )
 			{
-				_cells.RemoveAt( i );
+				var re = FindBallBySteamId( c.OwnerSteamId );
+				if ( ( !re.IsValid() || !re.Alive ) && _sinceCellHeal > 0.5f )
+				{
+					_sinceCellHeal = 0;
+					ScanBalls();   // 热重载窗口：主人球其实在场景里（新程序集对象），立刻收编再试
+					re = FindBallBySteamId( c.OwnerSteamId );
+				}
+				if ( re.IsValid() && re.Alive )
+				{
+					c.OwnerBall = re;
+				}
+				else
+				{
+					_cells.RemoveAt( i );
+					_cellsDirty = true;
+					continue;
+				}
+			}
+
+			// 尖刺分身到期（v0.7.4.0 用户定稿 B）：变回普通分身——质量保留，
+			// 按质量取合并冷却（v0.7.8.27 曲线）后按普通分身规则合体回收；此后不再是武器。
+			// MaxLife 覆盖（M7.4 护卫固守尖刺 8s）：到期同时解除锚定
+			if ( c.PieceKind == CellPiece.Kind.SpikeMinion
+				&& c.SinceSpawn > ( c.MaxLife > 0f ? c.MaxLife : GameConfig.SpikeMinionLife ) )
+			{
+				c.PieceKind = CellPiece.Kind.SplitPiece;
+				c.Anchored = false;
+				c.SinceSpawn = 0;
+				c.MergeCooldown = GameConfig.MergeCooldownFor( c.Mass );
+				NeonRenderer.Puff( c.Pos, c.ColorIndex );
 				_cellsDirty = true;
 				continue;
 			}
 
-			// 尖刺分身到期（v0.7.4.0 用户定稿 B）：变回普通分身——质量保留，
-			// 1s 合并冷却后按普通分身规则合体回收；此后不再是武器
-			if ( c.PieceKind == CellPiece.Kind.SpikeMinion && c.SinceSpawn > GameConfig.SpikeMinionLife )
+			// 质量衰减（v0.7.8.24 球球大作战手感）：分身与球同率持续掉重（孢子不衰减）
+			if ( c.PieceKind != CellPiece.Kind.EjectedMass && c.Mass > GameConfig.MassDecayMinMass )
 			{
-				c.PieceKind = CellPiece.Kind.SplitPiece;
-				c.SinceSpawn = 0;
-				c.MergeCooldown = GameConfig.MergeCooldownSeconds;
-				NeonRenderer.Puff( c.Pos, c.ColorIndex );
-				_cellsDirty = true;
-				continue;
+				c.Mass = MathF.Max( GameConfig.MassDecayMinMass, c.Mass - c.Mass * GameConfig.MassDecayPerSecond * dt );
 			}
 
 			c.Impulse *= MathF.Exp( -( c.PieceKind == CellPiece.Kind.EjectedMass
@@ -993,16 +1165,31 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 				c.SteerVel = Vector3.Lerp( c.SteerVel, target, t );
 			}
 
+			// 护卫固守尖刺（M7.4）：锚定分身原地不动（不跟随主人、无转向）
+			if ( c.Anchored ) c.SteerVel = Vector3.Zero;
+
 			var pos = c.Pos + ( c.Impulse + c.SteerVel ) * dt;
 			var half = MathF.Max( 0f, GameConfig.ArenaHalfSize - c.Radius );
 			pos.x = Math.Clamp( pos.x, -half, half );
 			pos.y = Math.Clamp( pos.y, -half, half );
 			pos.z = 0f;
 			c.Pos = pos;
+
+			// 领土喂旗（M7）：孢子落进旗圈即计分并消耗（驻军模型，host 权威）。
+			// 没进旗圈或规则不允许（非邻接/大本营）时 Feed 返回 false，孢子继续当普通孢子飞，质量不白费
+			if ( c.PieceKind == CellPiece.Kind.EjectedMass && MatchState.IsTerritory )
+			{
+				if ( TerritoryManager.Feed( c.TeamIndex, c.Pos, c.Mass ) )
+				{
+					_cells.RemoveAt( i );
+					_cellsDirty = true;
+					continue;
+				}
+			}
 		}
 
-		// 同主人合并（冷却 1s 后）：**碰到即合并**（圆缘相触，不再要求嵌进圆心——
-		// 用户实测反馈：靠在一起不动不算，观感就是"不能合并"）。优先并回主球，其次大分身吞小分身。
+		// 同主人合并（冷却按质量曲线 v0.7.8.27：小分身 1s、大分身最长 14s）：**碰到即合并**（圆缘相触，
+		// 不再要求嵌进圆心——用户实测反馈：靠在一起不动不算，观感就是"不能合并"）。优先并回主球，其次大分身吞小分身。
 		// ⚠️ 内层 j 只向上扫（j > i）：j 掉到 i 以下再 RemoveAt(i) 会索引越界
 		//（下方元素被删后 i 已漂移，实测 ArgumentOutOfRangeException 刷屏）
 		for ( int i = _cells.Count - 1; i >= 0; i-- )
@@ -1035,6 +1222,43 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 				break;   // 每帧每分身并一个，下一帧继续
 			}
 		}
+
+		// 敌方分身相互推挤（v0.7.8.24 球球大作战手感）：吃不动=实心，按质量权重互相让位。
+		// 同主人走上方合并；团队赛队友可重叠；尖刺分身是武器不参与（碰到走武器判定）
+		var pushTeamOf = BuildTeamMap();
+		for ( int i = 0; i < _cells.Count; i++ )
+		{
+			var a = _cells[i];
+			if ( a.PieceKind != CellPiece.Kind.SplitPiece ) continue;
+			for ( int j = i + 1; j < _cells.Count; j++ )
+			{
+				var b = _cells[j];
+				if ( b.PieceKind != CellPiece.Kind.SplitPiece ) continue;
+				if ( a.OwnerSteamId == b.OwnerSteamId ) continue;
+				if ( MatchState.IsTeam
+					&& pushTeamOf.TryGetValue( a.OwnerSteamId, out var at )
+					&& pushTeamOf.TryGetValue( b.OwnerSteamId, out var bt )
+					&& at == bt ) continue;
+				// 能吃就吃（TickEating 处理），不推——否则推挤会把可吞的对手挡开，大分身永远吃不掉小分身
+				var hi = MathF.Max( a.Mass, b.Mass );
+				var lo = MathF.Min( a.Mass, b.Mass );
+				if ( hi >= lo * GameConfig.EatRatio ) continue;
+
+				var dx = b.Pos.x - a.Pos.x;
+				var dy = b.Pos.y - a.Pos.y;
+				var rr = a.Radius + b.Radius;
+				var d2 = dx * dx + dy * dy;
+				if ( d2 >= rr * rr ) continue;
+				var d = MathF.Sqrt( MathF.Max( d2, 0.0001f ) );
+				var push = MathF.Min( rr - d, GameConfig.PushMaxStep );
+				var nx = d > 0.001f ? dx / d : 1f;
+				var ny = d > 0.001f ? dy / d : 0f;
+				var wa = b.Mass / ( a.Mass + b.Mass );   // 越重让得越少
+				a.Pos = new Vector3( a.Pos.x - nx * push * wa, a.Pos.y - ny * push * wa, 0f );
+				b.Pos = new Vector3( b.Pos.x + nx * push * ( 1f - wa ), b.Pos.y + ny * push * ( 1f - wa ), 0f );
+				_cellsDirty = true;
+			}
+		}
 	}
 
 	/// <summary>
@@ -1049,8 +1273,14 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		if ( !GameConfig.EnableSplit || !NetworkManager.IsAuthority ) return;
 		if ( ball is null || !ball.IsValid() || !ball.Alive ) return;
 		if ( ball.Mass < GameConfig.SplitMinMass ) return;
+		if ( ClassSkillManager.IsTankSurging( ball ) ) return;   // 坦克爆发期禁分裂（临时质量分裂=套现，M7.4）
 
 		var mainDir = FallbackDir( ball, DirTo( ball.WorldPosition, aimPoint ) );
+
+		// ⚠️ 先捕获旧分身数量再生成主球新分身：SpawnPiece 是尾部追加，若循环从
+		// _cells.Count-1 起步会第一轮就遍历到刚弹出的新分身把它再劈一次——
+		// 一次空格出 3 颗（本体+新分身+新分身的孪生），实测 v0.7.8.26 修
+		int oldCount = _cells.Count;
 
 		// 主球对半
 		if ( CountPiecesOf( ball.OwnerSteamId ) < GameConfig.MaxSplitPieces )
@@ -1061,9 +1291,10 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			NeonRenderer.Puff( ball.WorldPosition, ball.ColorIndex );
 		}
 
-		// 每个够重的分身也对半（**各自朝光标弹出**；倒序遍历 + 尾部追加，新分身本轮不参与）。
+		// 每个够重的**旧**分身也对半（**各自朝光标弹出**；倒序只遍历到 oldCount，
+		// 本轮新生成的主球分身/孪生一律不参与再分裂）。
 		// 新分身同样贴着母分身**外缘**生成（v0.7.2.0），否则 1s 冷却一到就被吸回去
-		for ( int i = _cells.Count - 1; i >= 0; i-- )
+		for ( int i = oldCount - 1; i >= 0; i-- )
 		{
 			var c = _cells[i];
 			if ( c.PieceKind != CellPiece.Kind.SplitPiece || c.OwnerSteamId != ball.OwnerSteamId ) continue;
@@ -1087,6 +1318,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 				DrawPos = c.Pos,
 				Impulse = new Vector3( dir.x, dir.y, 0f ) * GameConfig.SplitImpulseSpeed,
 				SinceSpawn = 0,
+				MergeCooldown = GameConfig.MergeCooldownFor( half ),   // v0.7.8.27 曲线
 			};
 			ClampToArena( twin );
 			_cells.Add( twin );
@@ -1114,6 +1346,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			DrawPos = ball.WorldPosition,
 			Impulse = new Vector3( dir.x, dir.y, 0f ) * GameConfig.SplitImpulseSpeed,
 			SinceSpawn = 0,
+			MergeCooldown = GameConfig.MergeCooldownFor( mass ),   // v0.7.8.27 曲线：分身越大合回越久
 		};
 		ClampToArena( c );
 		_cells.Add( c );
@@ -1271,17 +1504,26 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			}
 		}
 
-		// 孢子喂刺：碰刺芯被吸收
+		// 孢子喂刺（v0.7.8.24 球球大作战式）：吸收充能 → 喂满爆开射刺。刺不换位不重生，
+		// 喂食量归零重新攒——"在敌人身边养刺"的战术核心
 		for ( int i = _cells.Count - 1; i >= 0; i-- )
 		{
 			var c = _cells[i];
 			if ( c.PieceKind != CellPiece.Kind.EjectedMass ) continue;
 
-			foreach ( var s in spikes )
+			for ( int sIdx = 0; sIdx < spikes.Length; sIdx++ )
 			{
-				var dx = s.x - c.Pos.x;
-				var dy = s.y - c.Pos.y;
+				var dx = spikes[sIdx].x - c.Pos.x;
+				var dy = spikes[sIdx].y - c.Pos.y;
 				if ( dx * dx + dy * dy > touch * touch ) continue;
+
+				if ( _spikeFed is not null && (uint)sIdx < (uint)_spikeFed.Length )
+				{
+					_spikeFed[sIdx] += c.Mass;
+					NetworkManager.SpikeFed( sIdx, _spikeFed[sIdx] );   // 客户端镜像（刺长大显示用）
+					if ( _spikeFed[sIdx] >= GameConfig.SpikeGrowTarget )
+						BurstSpike( sIdx );
+				}
 
 				_cells.RemoveAt( i );
 				_cellsDirty = true;
@@ -1289,7 +1531,96 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			}
 		}
 
+		TickSpines();
 		TickSpikeMinions( spikes );
+	}
+
+	/// <summary> 刺爆（host 权威，v0.7.8.24）：喂食量清零 + 均匀角度射出弹幕（命中在 TickSpines）。
+	/// 角度公式 SpineDir 与客户端 OnSpikeBurstRemote 共用（确定性，视觉弹道=权威弹道） </summary>
+	void BurstSpike( int index )
+	{
+		if ( _spikes is null || _spikeFed is null || (uint)index >= (uint)_spikes.Length ) return;
+		_spikeFed[index] = 0f;
+
+		var pos = _spikes[index];
+		var n = GameConfig.SpikeBurstCount;
+		for ( int k = 0; k < n; k++ )
+		{
+			_spines.Add( new SpikeSpine
+			{
+				Pos = new Vector2( pos.x, pos.y ),
+				Vel = SpineDir( k, n, index ) * GameConfig.SpineSpeed,
+				SinceSpawn = 0,   // TimeSince 默认值≠0（记录时刻 0 → 读出巨大值立即过期），必须显式归零
+			} );
+		}
+		NetworkManager.SpikeBurst( index );   // 全端爆效；客户端在同款角度生成视觉弹幕
+	}
+
+	/// <summary> 弹幕方向（确定性公式，host 权威与客户端视觉共用）：均匀圆周 + 按刺序号错开 </summary>
+	static Vector2 SpineDir( int k, int n, int index )
+	{
+		var ang = k / (float)n * MathF.PI * 2f + index * 0.7f;
+		return new Vector2( MathF.Cos( ang ), MathF.Sin( ang ) );
+	}
+
+	/// <summary> 刺爆弹幕推进（host 权威）：命中球/分身扣质量（护盾不防尖刺族；出生保护免疫），
+	/// 到期消散。中立伤害——命中谁都扣（包括喂刺者自己），弹幕本体消失 </summary>
+	void TickSpines()
+	{
+		var dt = Time.Delta;
+		for ( int i = _spines.Count - 1; i >= 0; i-- )
+		{
+			var s = _spines[i];
+			if ( s.SinceSpawn > GameConfig.SpineLife ) { _spines.RemoveAt( i ); continue; }
+			s.Pos += s.Vel * dt;
+
+			bool consumed = false;
+
+			foreach ( var b in _balls )
+			{
+				if ( !b.IsValid() || !b.Alive || b.IsProtected ) continue;
+				var dx = b.WorldPosition.x - s.Pos.x;
+				var dy = b.WorldPosition.y - s.Pos.y;
+				var rr = b.Radius + GameConfig.SpineRadius;
+				if ( dx * dx + dy * dy >= rr * rr ) continue;
+
+				b.Mass = MathF.Max( GameConfig.StartMass, b.Mass * ( 1f - GameConfig.SpineHitMassFraction ) );
+				NetworkManager.SpineHit( s.Pos.x, s.Pos.y, (byte)Math.Clamp( b.ColorIndex, 0, 255 ) );
+				consumed = true;
+				break;
+			}
+			if ( consumed ) { _spines.RemoveAt( i ); continue; }
+
+			for ( int j = _cells.Count - 1; j >= 0; j-- )
+			{
+				var c = _cells[j];
+				if ( c.PieceKind != CellPiece.Kind.SplitPiece ) continue;
+				var dx = c.Pos.x - s.Pos.x;
+				var dy = c.Pos.y - s.Pos.y;
+				var rr = c.Radius + GameConfig.SpineRadius;
+				if ( dx * dx + dy * dy >= rr * rr ) continue;
+
+				c.Mass = MathF.Max( GameConfig.StartMass, c.Mass * ( 1f - GameConfig.SpineHitMassFraction ) );
+				_cellsDirty = true;
+				NetworkManager.SpineHit( s.Pos.x, s.Pos.y, (byte)Math.Clamp( c.ColorIndex, 0, 255 ) );
+				_spines.RemoveAt( i );
+				consumed = true;
+				break;
+			}
+			if ( consumed ) continue;
+		}
+	}
+
+	/// <summary> 刺爆弹幕（客户端镜像）：纯视觉弹道推进 + 到期消散，不判命中（扣质量由 host 权威下发） </summary>
+	void TickSpinesVisual()
+	{
+		var dt = Time.Delta;
+		for ( int i = _spines.Count - 1; i >= 0; i-- )
+		{
+			var s = _spines[i];
+			if ( s.SinceSpawn > GameConfig.SpineLife ) { _spines.RemoveAt( i ); continue; }
+			s.Pos += s.Vel * dt;
+		}
 	}
 
 	/// <summary>
@@ -1301,14 +1632,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	void TickSpikeMinions( Vector2[] spikes )
 	{
 		var touch = GameConfig.SpikeRadius * GameConfig.SpikeTouchFactor;
-		var teamOf = new Dictionary<long, int>();
-		if ( MatchState.IsTeam )
-		{
-			foreach ( var b in _balls )
-			{
-				if ( b.IsValid() && b.TeamIndex >= 0 ) teamOf[b.OwnerSteamId] = b.TeamIndex;
-			}
-		}
+		var teamOf = BuildTeamMap();
 
 		for ( int i = _cells.Count - 1; i >= 0; i-- )
 		{
@@ -1427,6 +1751,8 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	void GenerateSpikes()
 	{
 		_spikes = new Vector2[GameConfig.SpikeCount];
+		_spikeFed = new float[GameConfig.SpikeCount];
+		_spines.Clear();
 		for ( int i = 0; i < _spikes.Length; i++ )
 		{
 			_spikes[i] = RandomSpikePos();
@@ -1471,7 +1797,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			if ( cost <= 0f ) continue;
 
 			c.Mass -= cost;
-			SpawnBlob( c.Pos, DirOr( c.Pos, aimPoint, mainDir ), c.Radius, c.OwnerSteamId, c.ColorIndex, cost * GameConfig.EjectBlobEfficiency );
+			SpawnBlob( c.Pos, DirOr( c.Pos, aimPoint, mainDir ), c.Radius, c.OwnerSteamId, ball.TeamIndex, c.ColorIndex, cost * GameConfig.EjectBlobEfficiency );
 		}
 	}
 
@@ -1505,17 +1831,19 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		if ( cost <= 0f ) return;
 
 		ball.Mass -= cost;
-		SpawnBlob( ball.WorldPosition, dir, ball.Radius, ball.OwnerSteamId, ball.ColorIndex, cost * GameConfig.EjectBlobEfficiency );
+		SpawnBlob( ball.WorldPosition, dir, ball.Radius, ball.OwnerSteamId, ball.TeamIndex, ball.ColorIndex, cost * GameConfig.EjectBlobEfficiency );
 	}
 
-	/// <summary> 生成一颗中性孢子（质量=消耗×返还率）并做总量上限收敛（挤掉最老） </summary>
-	void SpawnBlob( Vector3 pos, Vector2 dir, float radius, long owner, int colorIndex, float mass )
+	/// <summary> 生成一颗中性孢子（质量=消耗×返还率）并做总量上限收敛（挤掉最老）。
+	/// team = 吐球者队伍（领土喂旗计分按队伍；bot 不按 OwnerSteamId 查——bot 的 SteamId 全是 0 会串队） </summary>
+	void SpawnBlob( Vector3 pos, Vector2 dir, float radius, long owner, int team, int colorIndex, float mass )
 	{
 		var c = new CellPiece
 		{
 			Id = _nextCellId++,
 			PieceKind = CellPiece.Kind.EjectedMass,
 			OwnerSteamId = owner,
+			TeamIndex = team,
 			ColorIndex = colorIndex,
 			Mass = mass,
 			Pos = pos + new Vector3( dir.x, dir.y, 0f ) * ( radius + 16f ),
@@ -1566,38 +1894,44 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		NetworkManager.CellsState( wires );
 	}
 
-	/// <summary> 客户端应用快照：按 Id 就地更新（保留 DrawPos 平滑），新增补入，消失移除 </summary>
+	/// <summary> 客户端应用快照：按 Id 就地更新（保留 DrawPos 平滑），新增补入，消失移除。
+	/// 经缓冲字典 O(n+m)（原双重全扫 O(n×m)，满配 800+ 分身/孢子时是 15Hz 热路径） </summary>
 	public void OnCellsStateRemote( CellWire[] wires )
 	{
 		if ( NetworkManager.IsAuthority ) return;   // host 回声挡掉
 
+		_wireById.Clear();
+		if ( wires is not null )
+		{
+			foreach ( var w in wires )
+				_wireById[w.Id] = w;
+		}
+
 		for ( int i = _cells.Count - 1; i >= 0; i-- )
 		{
 			var c = _cells[i];
-			bool found = false;
-			for ( int w = 0; w < wires.Length; w++ )
+			if ( !_wireById.TryGetValue( c.Id, out var w ) )
 			{
-				if ( wires[w].Id != c.Id ) continue;
-				c.Pos = new Vector3( wires[w].X, wires[w].Y, 0f );
-				c.Mass = wires[w].Mass;
-				c.ColorIndex = wires[w].ColorIndex;
-				c.OwnerSteamId = wires[w].Owner;
-				c.PieceKind = (CellPiece.Kind)wires[w].Kind;
-				found = true;
-				break;
+				_cells.RemoveAt( i );
+				continue;
 			}
-			if ( !found ) _cells.RemoveAt( i );
+
+			c.Pos = new Vector3( w.X, w.Y, 0f );
+			c.Mass = w.Mass;
+			c.ColorIndex = w.ColorIndex;
+			c.OwnerSteamId = w.Owner;
+			c.PieceKind = (CellPiece.Kind)w.Kind;
 		}
 
-		foreach ( var w in wires )
-		{
-			bool exists = false;
-			foreach ( var c in _cells )
-			{
-				if ( c.Id == w.Id ) { exists = true; break; }
-			}
-			if ( exists ) continue;
+		_cellIdScratch.Clear();
+		foreach ( var c in _cells )
+			_cellIdScratch.Add( c.Id );
 
+		foreach ( var kv in _wireById )
+		{
+			if ( _cellIdScratch.Contains( kv.Key ) ) continue;
+
+			var w = kv.Value;
 			var pos = new Vector3( w.X, w.Y, 0f );
 			_cells.Add( new CellPiece
 			{
@@ -1641,6 +1975,32 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	/// 20 秒内是"刺"——敌方玩家碰到按尖刺规则处理（大球被炸/小球死），到期变回普通分身合体回收质量。
 	/// 生成即带主人转向跟随（TickCells 的 SpikeMinion 分支）。
 	/// </summary>
+	/// <summary> 护卫固守尖刺（M7.4 职业）：原地生成锚定尖刺分身（8 秒，不扣主人质量），
+	/// 敌方触碰走尖刺分身既有判定；到期变回普通分身开始跟随主人 </summary>
+	public void SpawnGuardSpike( Ball ball )
+	{
+		if ( ball is null || !ball.IsValid() || !ball.Alive ) return;
+
+		var c = new CellPiece
+		{
+			Id = _nextCellId++,
+			PieceKind = CellPiece.Kind.SpikeMinion,
+			OwnerSteamId = ball.OwnerSteamId,
+			OwnerBall = ball,
+			TeamIndex = ball.TeamIndex,
+			ColorIndex = ball.ColorIndex,
+			Mass = MathF.Max( 10f, ball.Mass * 0.15f ),
+			Pos = ball.WorldPosition,
+			DrawPos = ball.WorldPosition,
+			SinceSpawn = 0,
+			Anchored = true,
+			MaxLife = GameConfig.ClassGuardLife,
+		};
+		_cells.Add( c );
+		_cellsDirty = true;
+		NeonRenderer.Puff( c.Pos, c.ColorIndex );
+	}
+
 	public void SpawnSpikeMinion( Ball ball )
 	{
 		if ( ball is null || !ball.IsValid() || !ball.Alive ) return;
@@ -1698,6 +2058,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		ball.Mass = mass;
 		ball.Alive = true;
 		ball.WorldPosition = pos;   // host 自己的球：owner 模拟从这里继续
+		_lastPos[ball.Id] = pos;   // 位移校验锚点同步瞬移，否则下一帧被当瞬移作弊拉回（v0.7.8.33 修）
 
 		// 远程玩家的球归其主人模拟，位置要通知主人瞬移过去（否则下一帧被主人的模拟写回旧位置）
 		if ( ball.IsRemoteOwned || ball.OwnerSteamId != Game.SteamId.Value )
@@ -1869,6 +2230,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		// 之前只 Hide 房间不亮菜单——任何路径漏掉 Show（热重载重建、异常中断）就是全空屏
 		if ( _browser.IsValid() && _browser.IsOpen ) return;   // 房间列表页开着：主菜单让位
 		if ( _settings.IsValid() && _settings.IsOpen ) return;   // 设置页开着：主菜单让位（v0.7.8.16）
+		if ( _rankings.IsValid() && _rankings.IsOpen ) return;   // 排行页开着：主菜单让位（v0.7.8.19）
 		if ( _menu.IsValid() && !_menu.GameObject.Enabled ) _menu.Show();
 	}
 
@@ -1889,6 +2251,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			}
 			_balls.Clear();
 			_lastPos.Clear();
+			_teleportGrace.Clear();
 			_cells.Clear();
 			_steerDir.Clear();
 			_sinceEject.Clear();
@@ -1930,6 +2293,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		CreateLobbyPanel();
 		CreateRoomBrowser();
 		CreateSettingsPanel();
+		CreateRankingsPanel();
 
 		// 食物管理与联机管理：**每台机器一份本地实例，自身不联网**。
 		// 食物状态经静态 RPC 同步（FoodFull 定向全量 / FoodEaten / FoodRespawned 广播增量）；
@@ -1939,7 +2303,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		_food = new FoodManager();
 		_power = new PowerUpManager();
 		_net = _root.AddComponent<NetworkManager>();
-		GameMusic.PlayMenu();   // 菜单曲（开局在 StartGame 切战斗曲）
+		GameMusic.PlayMenu();   // 菜单/大厅阶段播 journey（2026-09-09 用户定稿）
 
 		// 主菜单背景演示赛（v0.6.3.0）：离线 authority 跑一场纯 bot 对战当背景
 		if ( NetworkManager.IsAuthority && !Networking.IsActive )
@@ -1996,6 +2360,11 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 				_menu?.Hide();
 				_settings?.Show();
 				break;
+
+			case 5:   // RANKINGS：全球 XP 排行页（v0.7.8.19；BACK 回菜单）
+				_menu?.Hide();
+				_rankings?.Show();
+				break;
 		}
 	}
 
@@ -2035,6 +2404,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		_balls.Clear();
 		_cells.Clear();
 		_lastPos.Clear();
+		_teleportGrace.Clear();
 		_steerDir.Clear();
 		_sinceEject.Clear();
 		_power?.Reset();
@@ -2047,10 +2417,10 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	{
 		_lobbyOpen = true;
 
-		// 开新房默认 3 人团队赛（v0.7.8.0 用户定稿）：显式归位而不是只靠静态初始化器——
-		// 热重载保留旧静态值（残留 Ffa），开房时重设才能自愈；同一房间连续多局
+		// 开新房默认领土战争（v0.7.8.85 用户定稿）：显式归位而不是只靠静态初始化器——
+		// 热重载保留旧静态值，开房时重设才能自愈；同一房间连续多局
 		// （P 退局/结算回房）不走这里，玩家改过的选择保留
-		MatchState.PendingMode = MatchState.Mode.Team3;
+		MatchState.PendingMode = MatchState.Mode.Territory;
 
 		_menu?.Hide();
 		_lobby?.ShowHost();
@@ -2112,10 +2482,12 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			foreach ( var child in go.Children.ToArray() )
 			{
 				if ( !child.IsValid() ) continue;
-				// 剥掉 host 快照里自带的相机与全部 UI 面板（MainMenu/LobbyPanel/EndBoard 会随快照
-				// 复制过来，客户端留着就是双份界面/host 视角的房间页）——只用本机自己建的那套
+				// 剥掉 host 快照里自带的相机与全部 UI 面板（会随快照复制过来，客户端留着就是
+				// 双份界面/host 视角的页面）——只用本机自己建的那套。
+				// ⚠️ 新增 UI 面板必须同步加进这个名单（RoomBrowser/Settings/Rankings 曾漏，v0.7.8.33 补）
 				if ( child.Name == "Camera" || child.Name == "Hud" || child.Name == "MainMenu"
-					|| child.Name == "LobbyPanel" || child.Name == "EndBoard" )
+					|| child.Name == "LobbyPanel" || child.Name == "EndBoard"
+					|| child.Name == "RoomBrowser" || child.Name == "SettingsPanel" || child.Name == "RankingsPanel" )
 				{
 					var name = child.Name;
 					child.Destroy();
@@ -2192,6 +2564,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			else
 			{
 				b.Alive = false;   // 多余 bot 蛰伏（不可见不模拟）
+				b.Dormant = true;
 			}
 		}
 
@@ -2220,11 +2593,63 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 
 	/// <summary> 团队赛按块分队（v0.6.5.0 修 bug：原 %TeamSize 轮转=只有 TeamSize 个队、每队十几人；
 	/// 用户语义是"每队 N 人"→ 48 人 3 人队应分出 16 队）。普通赛恒 -1 </summary>
-	int NextTeamIndex() => MatchState.IsTeam ? _teamSeq++ / MatchState.TeamSize : -1;
+	int NextTeamIndex()
+	{
+		if ( !MatchState.IsTeam ) return -1;
+		var team = _teamSeq++ / MatchState.TeamSize;
+		// 领土固定 4 队（v0.7.8.35）：真人超编（大于 16）时挤进既有队，绝不开第 5 队——大本营只有四角
+		return MatchState.IsTerritory ? Math.Min( team, 3 ) : team;
+	}
 
-	/// <summary> 两颗球是否同队（TeamIndex<0 = 普通赛/未分队，不算同队） </summary>
+	/// <summary> 两颗球是否同队（TeamIndex 小于 0 = 普通赛/未分队，不算同队） </summary>
 	static bool SameTeam( Ball a, Ball b ) =>
 		a.TeamIndex >= 0 && a.TeamIndex == b.TeamIndex;
+
+	/// <summary> 推挤用：两个 SteamId 是否同阵营（同一 SteamId=自己的身体；团队赛按球上的 TeamIndex 查）。
+	/// 同阵营不推挤（BoB 惯例：自己和队友可重叠） </summary>
+	public bool SameTeamSteam( long a, long b )
+	{
+		if ( a == b ) return true;
+		if ( !MatchState.IsTeam ) return false;
+		var ta = TeamIndexOfSteam( a );
+		return ta >= 0 && ta == TeamIndexOfSteam( b );
+	}
+
+	/// <summary> 团队赛阵营映射（SteamId → 队伍号）：返回**复用缓冲**——每帧 TickEating/TickCells/
+	/// TickSpikeMinions 三处先后构建使用，调用方当帧用完即弃，不得跨方法/跨帧持有；
+	/// 普通赛返回空映射 </summary>
+	Dictionary<long, int> BuildTeamMap()
+	{
+		_teamScratch.Clear();
+		if ( !MatchState.IsTeam ) return _teamScratch;
+
+		foreach ( var b in _balls )
+		{
+			if ( b.IsValid() && b.TeamIndex >= 0 ) _teamScratch[b.OwnerSteamId] = b.TeamIndex;
+		}
+		return _teamScratch;
+	}
+
+	int TeamIndexOfSteam( long sid )
+	{
+		foreach ( var b in _balls )
+		{
+			if ( b.IsValid() && b.OwnerSteamId == sid && b.TeamIndex >= 0 ) return b.TeamIndex;
+		}
+		return -1;
+	}
+
+	/// <summary> eater 与孢子主人是否同阵营（v0.7.8.23）：同一 SteamId（自己），
+	/// 或团队赛下查 teamOf 同队。同阵营走 0.2s 快档，敌人 0.5s。
+	/// 注：bot 的 OwnerSteamId 全是 0——bot 之间的 blob 恒判"自己"快档（既有 SteamId 0 设计的既有模糊，无害） </summary>
+	static bool SameSide( long blobOwner, long eater, Dictionary<long, int> teamOf )
+	{
+		if ( eater == blobOwner ) return true;
+		return MatchState.IsTeam
+			&& teamOf.TryGetValue( eater, out var et )
+			&& teamOf.TryGetValue( blobOwner, out var bt )
+			&& et == bt;
+	}
 
 	/// <summary> 开局落地（本机）：出房间、上 HUD、切战斗曲（host 直调；客户端经 RPC）。
 	/// 客户端必须在这里置 _gameStarted——host 的置位在 MenuAction 里，客户端没有那条路径，
@@ -2307,12 +2732,23 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	{
 		_browser?.Hide();
 		_menu?.Show();
+
+		// JOIN 打开列表时 StopMenuDemo 清掉了背景演示赛——回菜单必须重新开起来，否则背景不动（用户实测）
+		if ( !_gameStarted && !_lobbyOpen && NetworkManager.IsAuthority && !Networking.IsActive )
+			StartMenuDemo();
 	}
 
 	/// <summary> 设置页收起（SettingsPanel BACK 调用）：回主菜单 </summary>
 	public void CloseSettings()
 	{
 		_settings?.Hide();
+		_menu?.Show();
+	}
+
+	/// <summary> 排行页收起（RankingsPanel BACK 调用）：回主菜单 </summary>
+	public void CloseRankings()
+	{
+		_rankings?.Hide();
 		_menu?.Show();
 	}
 
@@ -2395,8 +2831,41 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		GameLog.Info( $"[game] main promoted -> continue at ({x:0},{y:0})" );
 	}
 
+	/// <summary> host：标记一次合法瞬移（位移校验锚到新位置 + 开宽限期）——指挥官技能/晋升共用语义 </summary>
+	public void MarkTeleport( Ball ball, Vector3 pos )
+	{
+		_lastPos[ball.Id] = pos;
+		_teleportGrace[ball.Id] = 0;
+	}
+
+	/// <summary> 静态 RPC 落地：指挥官技能传送——本机球瞬移到队友身边（host 已先锚定校验位） </summary>
+	public void OnClassTeleportRemote( long steamId, float x, float y )
+	{
+		if ( NetworkManager.IsAuthority ) return;
+		if ( Game.SteamId.Value != steamId ) return;
+
+		var ball = LocalBall;
+		if ( !ball.IsValid() ) return;
+
+		ball.TeleportTo( new Vector3( x, y, 0f ) );
+		GameLog.Info( $"[class] commander teleport -> ({x:0},{y:0})" );
+	}
+
+	/// <summary> host：为指定玩家施放职业技能（客户端 RPC 入口；冷却/条件在管理器内校验） </summary>
+	public void CastClassSkillFor( long steamId )
+	{
+		foreach ( var b in _balls )
+		{
+			if ( b.IsValid() && !b.IsBot && b.Alive && b.OwnerSteamId == steamId )
+			{
+				ClassSkillManager.Cast( b );
+				return;
+			}
+		}
+	}
+
 	/// <summary> 静态 RPC 落地：为重连/复活的连接原地复活其球（按 OwnerSteamId 匹配） </summary>
-	public void RespawnConnection( Connection conn )
+	public void RespawnConnection( Connection conn, bool frontLine = false )
 	{
 		if ( conn is null || !conn.IsActive ) return;
 
@@ -2405,7 +2874,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		{
 			if ( b.IsValid() && !b.IsBot && !b.Alive && b.OwnerSteamId == steamId )
 			{
-				RespawnBall( b );
+				RespawnBall( b, frontLine: frontLine );
 				return;
 			}
 		}
@@ -2449,6 +2918,51 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	{
 		if ( NetworkManager.IsAuthority ) return;
 		_spikes = spikes;
+		_spikeFed = new float[spikes is null ? 0 : spikes.Length];   // 喂食量镜像归零（后续 SpikeFed RPC 逐步同步）
+		_spines.Clear();
+	}
+
+	// ---- 喂刺/刺爆远端事件（v0.7.8.24）----
+
+	/// <summary> 客户端镜像：某朵刺的累计喂食量（host 已直接写入，回声挡掉） </summary>
+	public void OnSpikeFedRemote( int index, float fed )
+	{
+		if ( NetworkManager.IsAuthority ) return;
+		if ( _spikeFed is not null && (uint)index < (uint)_spikeFed.Length ) _spikeFed[index] = fed;
+	}
+
+	/// <summary> 全端爆效；客户端用与 host 相同的确定性角度生成视觉弹幕（host 的权威弹幕在 BurstSpike 已生成） </summary>
+	public void OnSpikeBurstRemote( int index )
+	{
+		if ( _spikes is null || (uint)index >= (uint)_spikes.Length ) return;
+		var pos = _spikes[index];
+
+		if ( NetworkManager.IsAuthority )
+		{
+			GameSfx.Pop( new Vector3( pos.x, pos.y, 0f ) );   // host 爆效声（权威弹幕已在 BurstSpike 生成，渲染直接读）
+			return;
+		}
+
+		if ( _spikeFed is not null && (uint)index < (uint)_spikeFed.Length ) _spikeFed[index] = 0f;
+		var n = GameConfig.SpikeBurstCount;
+		for ( int k = 0; k < n; k++ )
+		{
+			_spines.Add( new SpikeSpine
+			{
+				Pos = new Vector2( pos.x, pos.y ),
+				Vel = SpineDir( k, n, index ) * GameConfig.SpineSpeed,
+				SinceSpawn = 0,   // 同 BurstSpike：TimeSince 必须显式归零
+			} );
+		}
+		GameSfx.Pop( new Vector3( pos.x, pos.y, 0f ) );
+	}
+
+	/// <summary> 刺爆弹幕命中特效（全端：Broadcast 本地也执行，host 不预播） </summary>
+	public void OnSpineHitRemote( float x, float y, byte colorIndex )
+	{
+		var pos = new Vector3( x, y, 0f );
+		NeonRenderer.Puff( pos, colorIndex );
+		GameSfx.Pop( pos );
 	}
 
 	// ---- 道具远端事件应用（仅客户端；host 的广播回声用 IsAuthority 挡掉）----
@@ -2494,7 +3008,8 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		if ( NetworkManager.IsAuthority ) return;
 		if ( !GameSfx.IsMine( ownerSteamId ) ) return;
 
-		var text = mode == 0 ? $"{PowerUpManager.NameOf( kind )} STORED" : GameHud.ActivationText( kind );
+		var text = mode == 2 ? $"{PowerUpManager.NameOf( kind )} READY (Q)"   // Q 充能到点（v0.7.8.31）
+			: mode == 0 ? $"{PowerUpManager.NameOf( kind )} STORED" : GameHud.ActivationText( kind );
 		_hud?.AddBanner( text, GameHud.KindColor( kind ) );
 		GameSfx.Pickup();
 
@@ -2523,15 +3038,15 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		var go = new GameObject( true, "GridBackdrop" );
 		go.Parent = _root;
 		go.AddComponent<GridBackdrop>();
+		go.AddComponent<TerritoryRenderer>();   // 领土格底色/边界/旗标（M7；非领土模式自清空不画）
 	}
 
-	/// <summary> 全场景一个的霓虹批量画笔：每帧把所有球写进两组顶点 </summary>
+	/// <summary> 全场景一个的像素批量画笔：每帧把所有球/分身写进各批次顶点（v0.7.8.40 分身头像也并入） </summary>
 	void CreateNeon()
 	{
 		var go = new GameObject( true, "Neon" );
 		go.Parent = _root;
 		go.AddComponent<NeonRenderer>();
-		go.AddComponent<PieceAvatarLayer>();   // 分身头像（数据实体没有 GO，本地图层跟随渲染）
 	}
 
 	void CreateCamera()
@@ -2556,17 +3071,16 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		cam.Orthographic = true;
 		cam.OrthographicHeight = GameConfig.CameraBaseView;
 		cam.ClearFlags = ClearFlags.All;
-		cam.BackgroundColor = new Color( 0.012f, 0.020f, 0.050f );   // 近黑深蓝，衬托霓虹
+		cam.BackgroundColor = new Color( 0.918f, 0.957f, 0.988f );   // #EAF4FC 浅蓝底（像素风，v0.7.8.36）
 		cam.EnablePostProcessing = true;
 
+		// Bloom 保留组件（cr_bloom convar/设置页还管它），默认关——加色泛光会糊掉糖果色与像素颗粒
 		var bloom = go.AddComponent<Bloom>();
 		bloom.Mode = SceneCamera.BloomAccessor.BloomMode.Additive;
-		bloom.Strength = 1.5f;      // v0.7.8.15 用户反馈调柔（原 2.6/0.30 头像照片亮部泛光刺眼）
-		bloom.Threshold = 0.55f;    // 抬高阈值：头像普通亮度不再发光，霓虹亮线保留光晕
+		bloom.Strength = 1.5f;
+		bloom.Threshold = 0.55f;
 
-		var tonemapping = go.AddComponent<Tonemapping>();
-		tonemapping.Mode = Tonemapping.TonemappingMode.ACES;
-
+		// 像素风去掉 ACES 色调映射（会把马卡龙色压灰），保持贴图原色
 		_camera = go.AddComponent<NeonCamera>();
 		_camera.Cam = cam;
 	}
@@ -2610,6 +3124,15 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		go.Parent = _root;
 		go.AddComponent<ScreenPanel>();
 		_settings = go.AddComponent<SettingsPanel>();
+	}
+
+	/// <summary> 排行页（v0.7.8.19 二级界面）：主菜单 [5] 进入——全球 XP 榜，BACK 回菜单 </summary>
+	void CreateRankingsPanel()
+	{
+		var go = new GameObject( true, "RankingsPanel" );
+		go.Parent = _root;
+		go.AddComponent<ScreenPanel>();
+		_rankings = go.AddComponent<RankingsPanel>();
 	}
 
 	/// <summary> 房间列表页（v0.6.7.0）：主菜单 [2] JOIN GAME 打开，列出 Steam 公开大厅 </summary>
@@ -2672,6 +3195,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		// 队伍分配：蛰伏球（房间阶段）不占队号，开局激活时统一按块分队；
 		// 对局中途加入的球（dormant=false 且比赛已开始）补分到下一个块（团队赛，v0.6.5.0）
 		ball.Init( isBot, !dormant && _gameStarted && MatchState.IsTeam ? NextTeamIndex() : -1 );
+		ball.Dormant = dormant;
 		if ( dormant ) ball.Alive = false;   // 必须在 NetworkSpawn 之前置 false，随初始快照下发
 
 		if ( isBot ) go.AddComponent<BotBrain>();
@@ -2689,7 +3213,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	}
 
 	/// <summary> 取一个未被占用的 bot 名（从游标起扫，跳过场上任何球——含蛰伏/尸体——正用着的；
-	/// 48 满编 < 64 名字池，正常永远取得到；池子真被占满才循环复用兜底） </summary>
+	/// 48 满编小于 64 名字池，正常永远取得到；池子真被占满才循环复用兜底） </summary>
 	string NextBotName()
 	{
 		for ( int i = 0; i < GameConfig.BotNames.Length; i++ )
@@ -2758,6 +3282,9 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 	{
 		_balls.Remove( ball );
 		_lastPos.Remove( ball.Id );
+		_teleportGrace.Remove( ball.Id );
+		_steerDir.Remove( ball.Id );
+		_sinceEject.Remove( ball.Id );
 		if ( LocalBall == ball ) LocalBall = null;
 	}
 
@@ -2804,7 +3331,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 			NetworkManager.RequestMatchState();
 		}
 
-		GameMusic.PlayMenu();
+		GameMusic.PlayMenu();   // 回大厅回到菜单曲
 		GameLog.Info( $"[match] back to lobby (auth={NetworkManager.IsAuthority})" );
 	}
 
@@ -2838,6 +3365,7 @@ public sealed class CircleroyaleGame : GameObjectSystem<CircleroyaleGame>
 		_balls.Clear();
 		_cells.Clear();
 		_lastPos.Clear();
+		_teleportGrace.Clear();
 		_steerDir.Clear();
 		_sinceEject.Clear();
 		_power?.Reset();

@@ -13,6 +13,7 @@ public sealed class RoomBrowser : PanelComponent
 {
 	Label _status;
 	Label[] _rows;
+	Panel _list;            // 房间列表滚动容器（原生网页式滚动）
 	Label _refresh;
 	Label _local;
 	Label _back;
@@ -25,7 +26,33 @@ public sealed class RoomBrowser : PanelComponent
 	bool _querying;
 	TimeSince _sinceQuery = 999f;
 
-	const int RowCount = 10;
+	const int MaxRooms = 200;   // 列表容量：行壳一次建好（Display.None 零绘制），文本流式绑定
+	const int BindChunk = 20;   // 每批绑定的行数（流式加载，滚近底部再绑下一批）
+	int _boundCount;            // 当前已绑定显示的行数
+
+		// 样式预览（2026-09-09 用户要求）：查不到真实房间时显示示例房看排版（含滚动条效果）。
+		// 已调完关闭；下次预览再改 true——示例行点击无反应（OnRowClicked 对超出真实数量的索引直接忽略）
+		const bool ShowSampleRows = false;
+
+		static readonly ( string Name, int Members, int Max, bool Full )[] SampleRows =
+		{
+			( "FLYBIRD'S ROOM", 3, 16, false ),
+			( "KITTEN CAFE", 16, 16, true ),
+			( "PRO LOBBY", 7, 16, false ),
+			( "中文房间测试", 5, 16, false ),
+			( "SNACK TIME", 12, 16, false ),
+			( "大球吃小球", 9, 16, false ),
+			( "NOOB ZONE", 2, 16, false ),
+			( "ROLLING THUNDER", 16, 16, true ),
+			( "AFTERNOON CHILL", 6, 16, false ),
+			( "EU DUEL CLUB", 11, 16, false ),
+		};
+
+		static readonly Color RowDim = new( 0.29f, 0.23f, 0.39f, 0.3f );
+		static readonly Color RowNormal = new( 0.29f, 0.23f, 0.39f, 0.9f );
+
+		/// <summary> 流式绑定要显示的总行数（样例模式开且无真实房间时 = 4 行示例） </summary>
+		int VisibleTotal => ( _lobbies.Count == 0 && ShowSampleRows ) ? SampleRows.Length : _lobbies.Count;
 
 	protected override void OnStart()
 	{
@@ -50,46 +77,40 @@ public sealed class RoomBrowser : PanelComponent
 		root.Style.BackgroundColor = new Color( 0.008f, 0.012f, 0.05f, 0.55f );
 		root.Style.PointerEvents = PointerEvents.All;
 
+		UiKit.AttachStyles( root );   // 共享部件样式（.cr-pill 药丸按钮）
+
 		var title = new Label() { Classes = "rb-title" };
 		title.Text = "ROOM BROWSER";
 		root.AddChild( title );
-
-		_status = new Label() { Classes = "rb-status" };
-		root.AddChild( _status );
 
 		var head = new Label() { Classes = "rb-head" };
 		head.Text = "ROOM                          PLAYERS";
 		root.AddChild( head );
 
-		_rows = new Label[RowCount];
+		// 房间列表：单列流内排列装进原生滚动容器（overflow-y + 滚轮）。
+		// 行壳一次建好但全部 Display.None（零绘制成本），文本由 BindMoreRows 滚近底部时分批绑定
+		_list = new Panel() { Classes = "rb-list" };
+		root.AddChild( _list );
+
+		_rows = new Label[MaxRooms];
 		for ( int i = 0; i < _rows.Length; i++ )
 		{
 			var row = new Label() { Classes = "rb-row" };
-			row.Style.Position = PositionMode.Absolute;
-			row.Style.Left = 460f;
-			row.Style.Width = 1000f;
-			row.Style.Top = 300f + i * 36f;
 			int index = i;
 			// lambda 捕获 this（实例方法）——无捕获静态 lambda 热重载后无法重映射（实测点击死锁）
 			row.AddEventListener( "onclick", () => OnRowClicked( index ) );
-			root.AddChild( row );
+			row.Style.Display = DisplayMode.None;
+			_list.AddChild( row );
 			_rows[i] = row;
 		}
 
-		_refresh = new Label() { Classes = "rb-refresh" };
-		_refresh.Text = "REFRESH";
-		_refresh.AddEventListener( "onclick", () => OnRefreshClicked() );
-		root.AddChild( _refresh );
+		// 状态条后于行牌创建——绘制顺序压在空牌上面（读取中/无房间/失败提示都走这里）
+		_status = new Label() { Classes = "rb-status" };
+		root.AddChild( _status );
 
-		_local = new Label() { Classes = "rb-local" };
-		_local.Text = "JOIN LOCAL — SAME MACHINE";
-		_local.AddEventListener( "onclick", () => OnLocalClicked() );
-		root.AddChild( _local );
-
-		_back = new Label() { Classes = "rb-back" };
-		_back.Text = "BACK — [4]";
-		_back.AddEventListener( "onclick", () => OnBackClicked() );
-		root.AddChild( _back );
+		_refresh = UiKit.PillButton( root, "REFRESH", "rb-refresh", () => OnRefreshClicked() );
+		_local = UiKit.PillButton( root, "JOIN LOCAL", "rb-local", () => OnLocalClicked() );
+		_back = UiKit.PillButton( root, "BACK", "rb-back", () => OnBackClicked() );
 
 		_built = true;
 	}
@@ -151,6 +172,10 @@ public sealed class RoomBrowser : PanelComponent
 		// 显示中每 10s 自动刷新一次房间列表（手动 REFRESH 也可）
 		if ( !_querying && _sinceQuery > 10f ) Refresh();
 
+		// 流式加载：滚到距底 <400px 时绑下一批行牌（ScrollSize 是内容总高，随绑定增长）
+		if ( _list.IsValid() && _boundCount < VisibleTotal && _list.ScrollOffset.y > _list.ScrollSize.y - 400f )
+			BindMoreRows();
+
 		if ( Input.Pressed( "Slot4" ) ) OnBackClicked();
 	}
 
@@ -192,29 +217,57 @@ public sealed class RoomBrowser : PanelComponent
 		}
 	}
 
-	void RenderRows()
-	{
-		if ( _rows is null || _rows[0] is null || !_rows[0].IsValid() ) return;
-
-		for ( int i = 0; i < _rows.Length; i++ )
+		void RenderRows()
 		{
-			var row = _rows[i];
-			if ( !row.IsValid() ) continue;
+			if ( _rows is null || _rows[0] is null || !_rows[0].IsValid() ) return;
 
-			if ( i >= _lobbies.Count )
+			// 刷新重绑：全部行壳先藏掉（空壳零绘制），再流式绑第一批
+			_boundCount = 0;
+			foreach ( var r in _rows )
+				if ( r.IsValid() ) r.Style.Display = DisplayMode.None;
+
+			BindMoreRows();
+
+			if ( _list.IsValid() ) _list.ScrollOffset = Vector2.Zero;   // 回到顶部
+		}
+
+		/// <summary> 流式加载：把下一批行牌填文本显示出来（滚近底部时 OnUpdate 再调） </summary>
+		void BindMoreRows()
+		{
+			if ( _rows is null || _rows[0] is null || !_rows[0].IsValid() ) return;
+
+			bool samples = _lobbies.Count == 0 && ShowSampleRows;
+			int end = Math.Min( VisibleTotal, _boundCount + BindChunk );
+
+			for ( int i = _boundCount; i < end; i++ )
 			{
-				row.Text = "";
-				continue;
+				var row = _rows[i];
+				if ( !row.IsValid() ) continue;
+
+				string text;
+				bool full;
+
+				if ( samples )
+				{
+					var s = SampleRows[i];
+					text = $"{s.Name}   —   {s.Members}/{s.Max}{( s.Full ? "  (FULL)" : "" )}";
+					full = s.Full;
+				}
+				else
+				{
+					var l = _lobbies[i];
+					var name = string.IsNullOrWhiteSpace( l.Name ) ? "CIRCLEROYALE ROOM" : l.Name;
+					text = $"{name}   —   {l.Members}/{l.MaxMembers}{( l.IsFull ? "  (FULL)" : "" )}";
+					full = l.IsFull;
+				}
+
+				row.Text = text;
+				row.Style.FontColor = full ? RowDim : RowNormal;
+				row.Style.Display = DisplayMode.Flex;
 			}
 
-			var l = _lobbies[i];
-			var name = string.IsNullOrWhiteSpace( l.Name ) ? "CIRCLEROYALE ROOM" : l.Name;
-			row.Text = $"{name}   —   {l.Members}/{l.MaxMembers}{( l.IsFull ? "  (FULL)" : "" )}";
-			row.Style.FontColor = l.IsFull
-				? new Color( 1f, 1f, 1f, 0.25f )
-				: new Color( 1f, 1f, 1f, 0.8f );
+			_boundCount = end;
 		}
-	}
 
 	void OnRowClicked( int index )
 	{

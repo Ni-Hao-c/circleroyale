@@ -14,11 +14,8 @@ public sealed class LobbyPanel : PanelComponent
 	Label _status;
 	Label[] _settings;       // 0=模式 1=时长 2=人数（host 可点击循环，client 只读展示）
 	Label _settingHint;      // "CLICK A SETTING TO CYCLE IT"（仅 host，v0.7.8.0）
-	Label _legendHead;       // 道具图例标题（v0.7.8.2）
-	Label[] _legendNames;    // 图例行：色点+道具名（种类色）
-	Label[] _legendDescs;    //   一句话说明（灰白）
-	Label _legendNote;       // 获取方式提示
-	Label[] _playerRows;     // 玩家列表：2 列 × 12 行
+	Label[] _playerRows;     // 玩家列表：单列（滚动容器内，容量 = MaxPlayerRows）
+	Panel _playersScroll;    // 玩家列表原生滚动容器（overflow-y + 滚轮）
 	Label _botsNote;
 	Label _start;
 	Label _leave;
@@ -40,7 +37,17 @@ public sealed class LobbyPanel : PanelComponent
 	int _clientPlayers;
 	List<string> _clientNames = new List<string>();
 
-	const int RowsPerCol = 12;
+	const int MaxPlayerRows = 64;   // = MaxPlayers（sbproj），滚动列表装得下满房
+
+	// 排版预览（2026-09-09 用户调样式用）：列表显示一批假玩家名。已调完关闭；下次预览再改 true
+	// （static readonly 不用 const：const 的 true/false 都会把分支判成不可达代码，报 CS0162）
+	static readonly bool ShowSamplePlayers = false;
+	static readonly string[] SamplePlayers =
+	{
+		"FLYBIRD", "KITTEN_92", "小���鸟", "ProEater", "SNACKLORD", "汤圆", "Wobble", "XIAO_LONG",
+		"Mochi", "大球王", "pixel_cat", "Doodle", "布丁", "GULP", "泥鳅", "Bubbles",
+		"阿翔", "Tofu", "MUNCHER", "云朵",
+	};
 
 	protected override void OnStart()
 	{
@@ -62,8 +69,10 @@ public sealed class LobbyPanel : PanelComponent
 		root.Style.Top = 0f;
 		root.Style.Right = 0f;
 		root.Style.Bottom = 0f;
-		root.Style.BackgroundColor = new Color( 0.008f, 0.012f, 0.05f, 0.55f );   // 半透明：网格/背景对战透出来（用户反馈"黑幕"）
+		root.Style.BackgroundColor = new Color( 0.918f, 0.957f, 0.988f, 0.82f );   // 浅蓝磨砂（像素风定稿；旧深灰遮罩在浅色世界上一坨脏灰，用户嫌丑）
 		root.Style.PointerEvents = PointerEvents.All;
+
+		UiKit.AttachStyles( root );   // 共享部件样式（.cr-pill 药丸按钮）
 
 		var title = new Label() { Classes = "lp-title" };
 		title.Text = "GAME LOBBY";
@@ -72,15 +81,16 @@ public sealed class LobbyPanel : PanelComponent
 		_status = new Label() { Classes = "lp-status" };
 		root.AddChild( _status );
 
-		var settingsHead = new Label() { Classes = "lp-head" };
+		var settingsHead = new Label() { Classes = "lp-head settings" };
 		settingsHead.Text = "MATCH SETTINGS";
 		root.AddChild( settingsHead );
 
+		// 设置牌纵排（参考图：右栏三张横牌从上到下），host 可点击循环，client 只读展示
 		_settings = new Label[3];
-		string[] ids = { "set-mode", "set-time", "set-players" };
 		for ( int i = 0; i < _settings.Length; i++ )
 		{
-			var l = new Label() { Classes = $"lp-setting {ids[i]}" };
+			var l = new Label() { Classes = "lp-setting" };
+			l.Style.Top = 330f + i * 88f;   // ★ 设置牌起点 + 行距（精修改这里）
 			int index = i;
 			l.AddEventListener( "onclick", () => CycleSetting( index ) );
 			root.AddChild( l );
@@ -92,61 +102,27 @@ public sealed class LobbyPanel : PanelComponent
 		_settingHint.Text = "CLICK A SETTING TO CYCLE IT";
 		root.AddChild( _settingHint );
 
-		// 道具图例（v0.7.8.2）：玩家列表左侧空列，色点+名称+一句话说明——开局前学习道具
-		_legendHead = new Label() { Classes = "lp-legend-head" };
-		_legendHead.Text = "POWERUPS";
-		root.AddChild( _legendHead );
-
-		byte[] legendKinds = { (byte)PowerUpManager.Kind.Speed, (byte)PowerUpManager.Kind.Magnet,
-			(byte)PowerUpManager.Kind.Shield, (byte)PowerUpManager.Kind.Spike, (byte)PowerUpManager.Kind.Mass };
-		string[] legendDescs =
-		{
-			"8s move boost",
-			"8s double food range",
-			"5s can't be eaten (not spikes)",
-			"burst bigger balls = 3s invincible",
-			"instant +300 mass",
-		};
-
-		_legendNames = new Label[legendKinds.Length];
-		_legendDescs = new Label[legendKinds.Length];
-		for ( int i = 0; i < legendKinds.Length; i++ )
-		{
-			var kind = legendKinds[i];
-			var rowTop = 690f + i * 34f;   // 左下角图例（v0.7.8.4 用户定稿：红箭头指向的位置）
-
-			var name = new Label() { Classes = "lp-legend-name" };
-			name.Text = $"■ {PowerUpManager.NameOf( kind )}";
-			name.Style.FontColor = PowerUpManager.ColorOf( kind );
-			name.Style.Top = rowTop;
-			root.AddChild( name );
-			_legendNames[i] = name;
-
-			var desc = new Label() { Classes = "lp-legend-desc" };
-			desc.Text = legendDescs[i];
-			desc.Style.Top = rowTop + 2f;
-			root.AddChild( desc );
-			_legendDescs[i] = desc;
-		}
-
-		_legendNote = new Label() { Classes = "lp-legend-note" };
-		_legendNote.Text = "PICK UP OR SPIT AT IT — USE WITH Q / E";
-		root.AddChild( _legendNote );
+		// 道具图例已按用户要求整个移除（2026-09-09）——Q/E 用法开局后 HUD 里还有提示
 
 		var playersHead = new Label() { Classes = "lp-head players" };
 		playersHead.Text = "PLAYERS";
 		root.AddChild( playersHead );
 
-		// 玩家列表 2 列 × 12 行（左列 0..11，右列 12..23）
-		_playerRows = new Label[RowsPerCol * 2];
+		// 玩家列表容器底（dobou InventoryHotbar 九宫格，用户指定 2026-09-09）：
+		// 先于行牌创建压在底层；空列表时也是一个有框的整洁面板，不再是裸留白
+		var playersBg = new Panel() { Classes = "lp-players-bg" };
+		root.AddChild( playersBg );
+
+		// 玩家列表：单列流内排列装进原生滚动容器（overflow-y + 滚轮，网页式滚动条），
+		// 容量提到 64（= MaxPlayers）；hotbar 底框只是装饰，滚动发生在它上面的透明容器里
+		_playersScroll = new ScrollSoundPanel() { Classes = "lp-players-scroll" };
+		root.AddChild( _playersScroll );
+
+		_playerRows = new Label[MaxPlayerRows];
 		for ( int i = 0; i < _playerRows.Length; i++ )
 		{
 			var row = new Label() { Classes = "lp-player" };
-			row.Style.Position = PositionMode.Absolute;
-			row.Style.Left = i < RowsPerCol ? 560f : 1010f;
-			row.Style.Width = 440f;
-			row.Style.Top = 384f + ( i % RowsPerCol ) * 30f;
-			root.AddChild( row );
+			_playersScroll.AddChild( row );
 			_playerRows[i] = row;
 		}
 
@@ -159,21 +135,12 @@ public sealed class LobbyPanel : PanelComponent
 		_countdown.Style.Display = DisplayMode.None;
 		root.AddChild( _countdown );
 
-		// JOIN GAME（客户端）：对局进行中时点此进入（3-2-1 倒计时）
-		_join = new Label() { Classes = "lp-join" };
-		_join.Text = "JOIN GAME";
-		_join.AddEventListener( "onclick", () => OnJoinClicked() );
-		root.AddChild( _join );
+		// 三个按钮全走 UiKit 药丸（外观在 Assets/ui/cruikit.scss 的 .cr-pill），这里只管摆放类
+		_join = UiKit.PillButton( root, "JOIN GAME", "lp-join", () => OnJoinClicked() );
 
-		_start = new Label() { Classes = "lp-start" };
-		_start.Text = "START GAME";
-		_start.AddEventListener( "onclick", () => OnStartClicked() );
-		root.AddChild( _start );
+		_start = UiKit.PillButton( root, "START GAME", "lp-start", () => OnStartClicked() );
 
-		_leave = new Label() { Classes = "lp-leave" };
-		_leave.Text = "LEAVE";
-		_leave.AddEventListener( "onclick", () => OnLeaveClicked() );
-		root.AddChild( _leave );
+		_leave = UiKit.PillButton( root, "LEAVE", "lp-leave", () => OnLeaveClicked() );
 
 		_built = true;
 	}
@@ -238,6 +205,7 @@ public sealed class LobbyPanel : PanelComponent
 		{
 			RefreshSettings();
 			RefreshPlayers();
+			RefreshButtons();   // 掉线恢复后把常驻按钮摆回来（WAITING/JOIN 文案也靠它刷）
 		}
 	}
 
@@ -322,7 +290,7 @@ public sealed class LobbyPanel : PanelComponent
 			}
 			else if ( _modeGlowActive )
 			{
-				_settings[0].Style.FontColor = new Color( 0.604f, 0.847f, 1f );   // scss .lp-setting 基色
+				_settings[0].Style.FontColor = new Color( 0.29f, 0.23f, 0.39f );   // scss .lp-setting 基色（梅紫 #4a3b63）
 				_modeGlowActive = false;
 			}
 		}
@@ -380,6 +348,7 @@ public sealed class LobbyPanel : PanelComponent
 			MatchState.Mode.Ffa => "MODE — FREE FOR ALL",
 			MatchState.Mode.Team2 => "MODE — TEAM (2 / TEAM)",
 			MatchState.Mode.Team3 => "MODE — TEAM (3 / TEAM)",
+			MatchState.Mode.Territory => "MODE — TERRITORY WAR",
 			_ => "MODE — TEAM (4 / TEAM)",
 		} );
 
@@ -387,7 +356,8 @@ public sealed class LobbyPanel : PanelComponent
 			? $"TIME — {duration:0} SEC"
 			: $"TIME — {duration / 60f:0} MIN" );
 
-		SetText( _settings[2], $"PLAYERS — {players}" );
+		// 领土模式人数固定 4 队 × 4 人（host Apply 强制 16），菜单选的 PLAYERS 无效——明示避免困惑
+		SetText( _settings[2], (MatchState.Mode)mode == MatchState.Mode.Territory ? "PLAYERS — 16 (4 TEAMS)" : $"PLAYERS — {players}" );
 	}
 
 	void RefreshPlayers()
@@ -404,6 +374,9 @@ public sealed class LobbyPanel : PanelComponent
 			names = _clientNames;
 		}
 
+		if ( ShowSamplePlayers )
+			names = new List<string>( SamplePlayers );   // 排版预览：假名替代真实列表（看完关掉）
+
 		if ( names.Count == 0 ) names = new List<string> { "..." };
 
 		for ( int i = 0; i < _playerRows.Length; i++ )
@@ -414,31 +387,41 @@ public sealed class LobbyPanel : PanelComponent
 			if ( i >= names.Count )
 			{
 				SetText( row, "" );
+				row.Style.Display = DisplayMode.None;   // 空位不画药片条（满屏空条很难看，实测截图）
 				continue;
 			}
 
+			row.Style.Display = DisplayMode.Flex;
 			var tag = i == 0 ? "  (HOST)" : "";
 			SetText( row, $"{i + 1}.  {names[i]}{tag}" );
-			row.Style.FontColor = i == 0 ? new Color( 0.21f, 0.94f, 1f ) : new Color( 1f, 1f, 1f, 0.75f );
+			row.Style.FontColor = i == 0 ? new Color( 0.898f, 0.282f, 0.553f ) : new Color( 0.29f, 0.23f, 0.39f, 0.85f );
 		}
 	}
 
 	void RefreshButtons()
 	{
-		// host 有 START；客户端有 JOIN GAME（对局进行中才亮）。LEAVE 两边都有
+		// host 有 START；客户端第二颗按钮常驻（用户需求 2026-09-09）：未开局显示 WAITING FOR HOST
+		// （点了不响应），开局亮成 JOIN GAME。LEAVE 两边都有
 		if ( _start.IsValid() )
 			_start.Style.Display = _isHost ? DisplayMode.Flex : DisplayMode.None;
 
 		if ( _join.IsValid() )
-			_join.Style.Display = !_isHost && _matchRunning ? DisplayMode.Flex : DisplayMode.None;
+		{
+			_join.Style.Display = !_isHost ? DisplayMode.Flex : DisplayMode.None;
+			SetText( _join, _matchRunning ? "JOIN GAME" : "WAITING FOR HOST" );
+		}
 
 		// 设置可点提示（v0.7.8.0）：只有 host 能改设置，提示也只给 host
 		if ( _settingHint.IsValid() )
 			_settingHint.Style.Display = _isHost ? DisplayMode.Flex : DisplayMode.None;
 	}
 
-	/// <summary> JOIN GAME 点击（实例方法：热重载可重映射） </summary>
-	void OnJoinClicked() => CircleroyaleGame.Current?.ClientJoinMatch();
+	/// <summary> JOIN GAME 点击（实例方法：热重载可重映射）。WAITING FOR HOST 状态点了不响应 </summary>
+	void OnJoinClicked()
+	{
+		if ( !_matchRunning ) return;
+		CircleroyaleGame.Current?.ClientJoinMatch();
+	}
 
 	/// <summary> START 点击 </summary>
 	void OnStartClicked() => CircleroyaleGame.Current?.StartMatchFromLobby();
@@ -452,11 +435,13 @@ public sealed class LobbyPanel : PanelComponent
 	{
 		if ( !_isHost ) return;
 
+		GameSfx.UiClick();   // 点了真会改参数才响（client 只读，点了不响）
+
 		switch ( index )
 		{
 			case 0:
-				// 模式 4 档循环（v0.6.5.0）：普通赛 → 2 人队 → 3 人队 → 4 人队
-				MatchState.PendingMode = (MatchState.Mode) ( ( (int)MatchState.PendingMode + 1 ) % 4 );
+				// 模式 5 档循环（v0.7.8.34）：普通赛 → 2 人队 → 3 人队 → 4 人队 → 领土战争
+				MatchState.PendingMode = (MatchState.Mode) ( ( (int)MatchState.PendingMode + 1 ) % 5 );
 				break;
 
 			case 1:

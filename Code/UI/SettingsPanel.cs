@@ -40,6 +40,8 @@ public sealed class SettingsPanel : PanelComponent
 		root.Style.BackgroundColor = new Color( 0.008f, 0.012f, 0.05f, 0.55f );
 		root.Style.PointerEvents = PointerEvents.All;
 
+		UiKit.AttachStyles( root );   // 共享部件样式（.cr-pill 药丸按钮）
+
 		var title = new Label() { Classes = "sp-title" };
 		title.Text = "SETTINGS";
 		root.AddChild( title );
@@ -50,24 +52,23 @@ public sealed class SettingsPanel : PanelComponent
 
 		_bloom = new Label() { Classes = "sp-row" };
 		_bloom.Style.Position = PositionMode.Absolute;
-		_bloom.Style.Left = 0f;
-		_bloom.Style.Right = 0f;
+		_bloom.Style.Left = Length.Percent( 50f );   // 600 宽行居中（宽在 scss），任意分辨率自适应
+		_bloom.Style.MarginLeft = -300f;
+		_bloom.Style.Width = 600f;
 		_bloom.Style.Top = 360f;
 		_bloom.AddEventListener( "onclick", () => OnBloomClicked() );   // 捕获 this：热重载可重映射
 		root.AddChild( _bloom );
 
 		_music = new Label() { Classes = "sp-row" };
 		_music.Style.Position = PositionMode.Absolute;
-		_music.Style.Left = 0f;
-		_music.Style.Right = 0f;
+		_music.Style.Left = Length.Percent( 50f );
+		_music.Style.MarginLeft = -300f;
+		_music.Style.Width = 600f;
 		_music.Style.Top = 430f;
 		_music.AddEventListener( "onclick", () => OnMusicClicked() );
 		root.AddChild( _music );
 
-		var back = new Label() { Classes = "sp-back" };
-		back.Text = "BACK — [4]";
-		back.AddEventListener( "onclick", () => OnBackClicked() );
-		root.AddChild( back );
+		UiKit.PillButton( root, "BACK", "sp-back", () => OnBackClicked() );   // 捕获 this：热重载可重映射
 
 		_built = true;
 	}

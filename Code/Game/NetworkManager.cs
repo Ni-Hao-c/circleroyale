@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -226,7 +227,10 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 		// 主线程下一帧生成（0.1s << 客户端请求快照的 ~2s，球必然进快照）。
 		// 房间阶段生成的是蛰伏球（Alive=false）；名单变化由主线程统一广播 LobbyState
 		bool lobby = CircleroyaleGame.Current?.IsLobbyOpen ?? false;
-		_pendingJoins.Add( new PendingJoin( channel, 0f, 0.1f, false, lobby ) );
+		lock ( _joinLock )
+		{
+			_pendingJoins.Add( new PendingJoin( channel, 0f, 0.1f, false, lobby ) );
+		}
 		CircleroyaleGame.Current?.MarkLobbyDirty();
 		GameLog.Info( $"[net] pre-snapshot ball queued for '{channel.DisplayName}' (dormant={lobby})" );
 	}
@@ -344,7 +348,10 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 		// 球通常已在 OnConnected（快照前）生成；这里只兜底"当时世界未就绪"的竞态
 		if ( !HasBallFor( channel ) )
 		{
-			_pendingJoins.Add( new PendingJoin( channel, 0f, 0.8f, true ) );
+			lock ( _joinLock )
+			{
+				_pendingJoins.Add( new PendingJoin( channel, 0f, 0.8f, true ) );
+			}
 			GameLog.Info( $"[net] join queued for '{channel.DisplayName}' (fallback) — no pre-snapshot ball" );
 		}
 	}
@@ -365,6 +372,8 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 	}
 
 	readonly List<PendingJoin> _pendingJoins = new();
+	readonly object _joinLock = new();       // OnConnected/OnActive 在网络线程入队，主线程 OnUpdate 消费——List 跨线程必须持锁
+	readonly ConcurrentQueue<Connection> _pendingLeaves = new();   // 断线清理队列（网络线程入队，主线程落地销毁/清分身）
 
 	// ---- 客户端自动重连（M3，兜引擎握手偶发非主线程断言）----
 	string _serverAddress;          // 见过就记：握手早期 HostConnection 就有值，首连失败也拿得到
@@ -380,17 +389,35 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 
 		TickDisconnectRecovery();
 		TickReconnectWatchdog();
+		TickPendingLeaves();
 
-		if ( _pendingJoins.Count == 0 ) return;
+		// 加入者球生成：网络线程入队（OnConnected/OnActive），这里主线程出队执行
+		List<PendingJoin> due = null;
 
-		for ( int i = _pendingJoins.Count - 1; i >= 0; i-- )
+		lock ( _joinLock )
 		{
-			var p = _pendingJoins[i];
-			if ( p.Since < p.Delay ) continue;
+			for ( int i = _pendingJoins.Count - 1; i >= 0; i-- )
+			{
+				var p = _pendingJoins[i];
+				if ( p.Since < p.Delay ) continue;
 
-			_pendingJoins.RemoveAt( i );
-			SpawnJoinBall( p.Channel, p.CheckActive, p.Dormant );
+				_pendingJoins.RemoveAt( i );
+				( due ??= new List<PendingJoin>() ).Add( p );
+			}
 		}
+
+		if ( due is null ) return;
+
+		foreach ( var p in due )
+			SpawnJoinBall( p.Channel, p.CheckActive, p.Dormant );
+	}
+
+	/// <summary> 断线清理落地：引擎在 OnLeave 路径同步 invoke 回调（与 OnConnected 同线程，
+	/// 实测网络线程）——Destroy 球/清分身不能就地做，入队交给主线程（v0.7.8.33） </summary>
+	void TickPendingLeaves()
+	{
+		while ( _pendingLeaves.TryDequeue( out var channel ) )
+			ProcessDisconnected( channel );
 	}
 
 	// ---- 客户端掉线自动重连（v0.6.4.6 用户定稿）：掉线 → 按 ReconnectRetrySeconds 重试 →
@@ -554,8 +581,16 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 	}
 
 	/// <summary> 断线：销毁其球（销毁会同步到所有端），分身随葬，bot 由 TickBots 回填。
-	/// 房间阶段还要把名单变化推给剩下的人（置脏标，主线程广播） </summary>
+	/// 房间阶段还要把名单变化推给剩下的人（置脏标，主线程广播）。
+	/// ⚠️ 本回调在网络线程被 invoke（与 OnConnected 同路径）——只入队，清理由主线程
+	/// TickPendingLeaves 落地（v0.7.8.33） </summary>
 	public void OnDisconnected( Connection channel )
+	{
+		_pendingLeaves.Enqueue( channel );
+	}
+
+	/// <summary> 断线清理实体工作（主线程）：销毁其球、分身随葬、名单置脏 </summary>
+	void ProcessDisconnected( Connection channel )
 	{
 		var game = CircleroyaleGame.Current;
 		if ( game is null ) return;
@@ -576,7 +611,11 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 	public void ResetSession()
 	{
 		_hosted = false;
-		_pendingJoins.Clear();
+		lock ( _joinLock )
+		{
+			_pendingJoins.Clear();
+		}
+		while ( _pendingLeaves.TryDequeue( out _ ) ) { }
 		_reconnectAttempts = 0;
 		_sinceJoinStuck = 0;
 		_reconnecting = false;
@@ -584,87 +623,121 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 	}
 
 	// ---- 食物与重生：静态 RPC（不依赖任何网络对象）----
+	// ⚠️ 下面所有 host→全端的状态广播一律带 NetFlags.HostOnly：引擎只对标了 HostOnly 的 RPC
+	// 校验"调用方是 host"（Rpc.StaticRpc.HasStaticPermission），裸 [Rpc.Broadcast] 任何客户端
+	// 都能伪造并让全端执行（v0.7.8.33 收口）。新增广播 RPC 记得照带。 ----
 
 	/// <summary> host 吃判定后广播：某食物被吃（eaterSteamId 供客户端判断是否自己的嘴，播吃音） </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void FoodEaten( int index, long eaterSteamId = 0 ) => CircleroyaleGame.Current?.OnFoodEatenRemote( index, eaterSteamId );
 
 	/// <summary> host 重生食物后广播：新位置/颜色 </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void FoodRespawned( int index, FoodData food ) => CircleroyaleGame.Current?.OnFoodRespawnedRemote( index, food );
 
 	/// <summary> 新连接加入时定向发送：食物全量 </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void FoodFull( FoodData[] foods ) => CircleroyaleGame.Current?.OnFoodFullRemote( foods );
 
 	/// <summary> 绿刺位置（host 生成后广播 + 新连接定向补发；静态数据，此后不变） </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void SpikesFull( Vector2[] spikes ) => CircleroyaleGame.Current?.OnSpikesFullRemote( spikes );
 
+	/// <summary> 喂刺充能（host 吸收孢子后广播；客户端镜像刺的累计喂食量，v0.7.8.24） </summary>
+	[Rpc.Broadcast( NetFlags.Unreliable | NetFlags.HostOnly )]
+	public static void SpikeFed( int index, float fed ) => CircleroyaleGame.Current?.OnSpikeFedRemote( index, fed );
+
+	/// <summary> 刺爆（host 喂满触发后广播；全端爆效，客户端生成视觉弹幕） </summary>
+	[Rpc.Broadcast( NetFlags.HostOnly )]
+	public static void SpikeBurst( int index ) => CircleroyaleGame.Current?.OnSpikeBurstRemote( index );
+
+	/// <summary> 刺爆弹幕命中特效（host 命中判定后广播；全端放特效音效） </summary>
+	[Rpc.Broadcast( NetFlags.Unreliable | NetFlags.HostOnly )]
+	public static void SpineHit( float x, float y, byte colorIndex ) => CircleroyaleGame.Current?.OnSpineHitRemote( x, y, colorIndex );
+
 	/// <summary> 道具全量（host 开局广播 + 新连接定向补发；固定槽位数组，幂等） </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void PowerUpFull( PowerUpWire[] slots ) => CircleroyaleGame.Current?.OnPowerUpFullRemote( slots );
 
 	/// <summary> 道具被捡（host 拾取判定后广播；客户端放特效并置空槽） </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void PowerUpPicked( int slot, byte kind, long pickerSteamId ) => CircleroyaleGame.Current?.OnPowerUpPickedRemote( slot, kind, pickerSteamId );
 
 	/// <summary> 道具重刷（host 延时补位后广播） </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void PowerUpRespawned( int slot, byte kind, float x, float y ) => CircleroyaleGame.Current?.OnPowerUpRespawnedRemote( slot, kind, x, y );
 
 	/// <summary> 重生提示音广播（host 复活一颗球后）：各端按"队友才响"落地（v0.7.8.11） </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void RespawnCue( long steamId, int teamIndex ) => CircleroyaleGame.Current?.OnRespawnCueRemote( steamId, teamIndex );
 
 	/// <summary> 尖刺分身炸大奖广播（host 判定后）：成就解锁在尖刺主人的机器上落地（v0.7.8.13） </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void SpikeReward( long ownerSteamId ) => GameAchievements.OnSpikeRewardRemote( ownerSteamId );
 
 	/// <summary> 个人高光横幅广播（v0.7.6.0）：mode 0=存入背包 / 1=喂养触发激活——
 	/// host 本地已播，客户端按 ownerSteamId 判"是不是自己的"再显示 </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void PowerBanner( byte kind, long ownerSteamId, byte mode ) => CircleroyaleGame.Current?.OnPowerBannerRemote( kind, ownerSteamId, mode );
 
 	/// <summary> 死亡/爆裂特效广播（不可靠传输——丢一帧特效无所谓，不占可靠通道）。
 	/// ownerSteamId = 死亡实体的主人，客户端据此判断是否自己死亡/爆裂（只播自己的爆裂音） </summary>
-	[Rpc.Broadcast( NetFlags.Unreliable )]
+	[Rpc.Broadcast( NetFlags.Unreliable | NetFlags.HostOnly )]
 	public static void PoppedEffect( Vector3 pos, byte colorIndex, float radius, long ownerSteamId ) => CircleroyaleGame.Current?.OnPoppedEffectRemote( pos, colorIndex, radius, ownerSteamId );
 
 	/// <summary> 吞球广播（eater/eaten 的 SteamId 供客户端判断自己是否参与，播吞球音 + 击杀播报） </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void BallEaten( long eaterSteamId, long eatenSteamId, float massGained ) => CircleroyaleGame.Current?.OnBallEatenRemote( eaterSteamId, eatenSteamId, massGained );
 
 	// ---- 比赛规则与进程（M5）----
 
 	/// <summary> 比赛规则下发（host 开局广播 + 新连接定向补发；一次性、幂等） </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void MatchSettings( byte mode, int durationSeconds, int playerTarget ) => MatchState.Apply( mode, durationSeconds, playerTarget );
 
 	/// <summary> 倒计时校时（1Hz 不可靠广播；客户端本地每帧续走） </summary>
-	[Rpc.Broadcast( NetFlags.Unreliable )]
+	[Rpc.Broadcast( NetFlags.Unreliable | NetFlags.HostOnly )]
 	public static void MatchTick( float timeLeft ) => MatchState.ApplyTick( timeLeft );
 
 	/// <summary> 比赛结束 + 结算榜（host 排好序广播；各端展示并各自上传成绩） </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void MatchOver( ScoreWire[] standings ) => CircleroyaleGame.Current?.OnMatchOverRemote( standings );
 
+	/// <summary> 领土格状态快照（M7，host 变化广播 + 终局先行快照；全量替换式量极小，
+	/// 可靠传输——变化才发，丢了没人补发，不可靠反而会永久漏一拍）。points = 四队占旗积分 </summary>
+	[Rpc.Broadcast( NetFlags.HostOnly )]
+	public static void TerritoryState( TerritoryWire[] cells, float[] points ) => TerritoryManager.ApplyRemote( cells, points );
+
+	/// <summary> 客户端施放职业技能（M7.4）：host 按 Rpc.Caller 找到活球，冷却/条件校验后执行 </summary>
+	[Rpc.Host]
+	public static void RequestClassSkill()
+	{
+		var conn = Rpc.Caller;
+		if ( conn is null || !conn.IsActive ) return;
+
+		CircleroyaleGame.Current?.CastClassSkillFor( conn.SteamId.Value );
+	}
+
+	/// <summary> 指挥官技能传送（M7.4）：广播到各端，本机球瞬移到队友身边；host 回声被 IsAuthority 挡掉 </summary>
+	[Rpc.Broadcast( NetFlags.HostOnly )]
+	public static void ClassTeleport( long steamId, float x, float y ) => CircleroyaleGame.Current?.OnClassTeleportRemote( steamId, x, y );
+
 	/// <summary> 房主点了 START：客户端出房间进游戏（OnActive 对中途加入者也有定向版） </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void MatchStarted() => CircleroyaleGame.Current?.OnMatchStartedRemote();
 
 	/// <summary> host 按 P 快速退局（v0.6.9.0）：广播取消——所有客户端一起回房间等待页 </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void MatchCancelled() => CircleroyaleGame.Current?.OnMatchCancelledRemote();
 
 	/// <summary> 房间信息推送（参数 + 玩家名单；名单/参数变化与新人 OnActive 定向共用）。
 	/// names[0] 恒为房主。 </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void LobbyState( byte mode, int durationSeconds, int playerTarget, string[] names ) => CircleroyaleGame.Current?.OnLobbyStateRemote( mode, durationSeconds, playerTarget, names );
 
 	/// <summary> 主球被吃后最大分身晋升（v0.6.2.0）：定向发给该玩家——把主球瞬移到晋升位置
 	/// 继续 owner 模拟（质量经 [Sync] 自动同步）。host 自己的球不走此 RPC（本地已直接设位）。 </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void MainPromoted( float x, float y ) => CircleroyaleGame.Current?.OnMainPromotedRemote( x, y );
 
 	/// <summary> 客户端请求当前对局状态（v0.6.3.4）：进房间/重连/热重载后向 host 要一次——
@@ -703,21 +776,22 @@ public sealed class NetworkManager : Component, Component.INetworkListener
 	/// host 按固定节拍广播：分身/孢子状态快照（纯数据实体，各端镜像渲染）。
 	/// 广播对刚加入的连接也有效（与食物增量同款路径，实测可靠）——中途加入也能看到正在飞的分身。
 	/// </summary>
-	[Rpc.Broadcast]
+	[Rpc.Broadcast( NetFlags.HostOnly )]
 	public static void CellsState( CellWire[] cells ) => CircleroyaleGame.Current?.OnCellsStateRemote( cells );
 
 	/// <summary>
 	/// 客户端请求重生（静态 RPC）：host 用 Rpc.Caller 取回调用者连接并为其原地复活。
+	/// 领土模式 frontLine=true 复活到最近己方占领格（M7.2 二选一，默认大本营）。
 	/// 不要让客户端自报 SteamId——同机双开时连接是合成 ID，与 Game.SteamId 对不上（实测踩坑）。
 	/// </summary>
 	[Rpc.Host]
-	public static void RequestRespawn()
+	public static void RequestRespawn( bool frontLine )
 	{
 		var conn = Rpc.Caller;
-		GameLog.Info( $"[net] RequestRespawn from '{conn?.DisplayName ?? "null"}'" );   // 生命周期日志：定位客户端重生链路断点
+		GameLog.Info( $"[net] RequestRespawn from '{conn?.DisplayName ?? "null"}' front={frontLine}" );   // 生命周期日志：定位客户端重生链路断点
 		if ( conn is null || !conn.IsActive ) return;
 
-		CircleroyaleGame.Current?.RespawnConnection( conn );
+		CircleroyaleGame.Current?.RespawnConnection( conn, frontLine );
 	}
 
 	/// <summary> 客户端本地食物列表未就绪（热重载/新实例）时，向 host 请求全量（定向回发）；

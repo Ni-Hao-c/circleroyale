@@ -1,0 +1,20 @@
+// 通用药丸按钮（主菜单 .menu-row .btn 同款外观）——由 UiKit.AttachStyles 挂到各面板根。
+// 这里只管外观；位置/宽度用调用方的摆放类写（如 SettingsPanel.cs.scss 的 .sp-back）
+.cr-pill {
+	height: 54px;
+	justify-content: center;   // 固定高度内文字垂直居中（文字默认贴顶画）
+	font-size: 20px;
+	font-weight: 700;
+	letter-spacing: 5px;
+	text-align: center;
+	color: #4a3b63;
+	border-image: url( ui/skin/btn_white.png ) 52 fill / 26px stretch;
+	border-image-tint: #cfeeda;   // 浅绿底（用户定稿）
+	cursor: pointer;
+	pointer-events: all;
+}
+
+.cr-pill:hover {
+	border-image-tint: #e4f7dd;
+	color: #2f7d4f;   // 粉色 hover 配绿底违和，换深绿字
+}

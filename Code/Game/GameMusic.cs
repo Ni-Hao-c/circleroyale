@@ -1,14 +1,14 @@
 using System;
 
 /// <summary>
-/// 背景音乐（M4）：主菜单 = chiptune1，战斗 = battle.music。走 .sound SoundEvent（UI 标志 = 2D 平面声，
-/// 与 6 个音效同一条已验证链路；ResourceLibrary.Get&lt;SoundFile&gt; 直接取导入 mp3 取不到，实测）。
-/// **循环 = 播完自动重播**（SoundHandle 没有循环标志，Tick 里检测曲终重开）。切曲：旧曲 1s 淡出、新曲 1s 淡入。
+/// 背景音乐（M4；2026-09-09 用户定稿：主菜单/大厅 = journey，战斗 = town，
+/// 旧 chiptune1/battle.music 弃用）。走 .sound SoundEvent（UI 标志 = 2D 平面声）。
+/// **循环 = 播完自动重播**（SoundHandle 没有循环标志，Tick 里检测曲终重开）。切曲旧曲 1s 淡出。
 /// </summary>
 public static class GameMusic
 {
-	const string MenuTrack = "sounds/music/chiptune1.sound";
-	const string BattleTrack = "sounds/music/battle.music.sound";
+	const string MenuTrack = "sounds/music/journey.sound";
+	const string BattleTrack = "sounds/music/town.sound";
 
 	static SoundHandle _handle;
 	static string _track;
@@ -19,11 +19,23 @@ public static class GameMusic
 	[ConVar( "cr_music_volume", Help = "Music volume 0..1 (default 0.22)" )]
 	public static float Volume { get; set; } = 0.22f;
 
-	/// <summary> 切主菜单曲（已在放就无事发生） </summary>
+	/// <summary> 主菜单/大厅曲（已在放就无事发生） </summary>
 	public static void PlayMenu() => Play( MenuTrack );
 
-	/// <summary> 切战斗曲（开局时调） </summary>
+	/// <summary> 开局切战斗曲（已在放就无事发生） </summary>
 	public static void PlayBattle() => Play( BattleTrack );
+
+	/// <summary> 停止音乐（保留备用，当前菜单/大厅/战斗三态都有各自的曲子） </summary>
+	public static void Stop()
+	{
+		_track = null;
+		_wasPlaying = false;
+		if ( _handle.IsValid() )
+		{
+			_handle.Stop( 1f );
+			_handle = default;
+		}
+	}
 
 	/// <summary> 每帧调（CircleroyaleGame.Tick，菜单阶段也要跑）：音量跟随 convar + 曲终自动重播 </summary>
 	public static void Tick()

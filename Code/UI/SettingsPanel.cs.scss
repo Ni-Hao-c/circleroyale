@@ -4,9 +4,10 @@ SettingsPanel {
 	top: 0;
 	right: 0;
 	bottom: 0;
-	font-family: SimHei;
-	color: white;
+	font-family: PixelFusion;
+	color: #4a3b63;
 	pointer-events: all;
+	background-color: rgba( 234, 244, 252, 0.88 );   // 浅蓝磨砂（像素风）
 
 	.sp-title {
 		position: absolute;
@@ -17,8 +18,8 @@ SettingsPanel {
 		font-weight: 800;
 		letter-spacing: 10px;
 		text-align: center;
-		color: #35f0ff;
-		text-shadow: 0 0 26px rgba( 53, 240, 255, 0.85 );
+		color: #f272a7;
+		text-shadow: 0 4px 0 #4a3b63;
 	}
 
 	.sp-hint {
@@ -29,38 +30,36 @@ SettingsPanel {
 		font-size: 13px;
 		letter-spacing: 3px;
 		text-align: center;
-		color: rgba( 255, 255, 255, 0.32 );
+		color: rgba( 74, 59, 99, 0.6 );
 	}
 
+	// 设置行（v0.7.8.42）：dobou 奶油按钮九宫格，600 宽居中（位置由 C# 设 left:center）
 	.sp-row {
-		font-size: 22px;
+		height: 54px;
+		padding-top: 8px;   // 用户要求：文字下移 8 像素
+		font-size: 20px;
 		font-weight: 700;
 		letter-spacing: 3px;
 		text-align: center;
-		color: #9ad8ff;
-		text-shadow: 0 0 10px rgba( 0, 0, 0, 0.8 );
+		color: #4a3b63;
+		border-image: url( ui/skin/btn_white.png ) 52 fill / 26px stretch;
+		border-image-tint: #ceecee;   // 浅绿底（与 UiKit 药丸一致）
 		cursor: pointer;
 		pointer-events: all;
 	}
 
 	.sp-row:hover {
-		color: #ffffff;
+		border-image-tint: #e4f7dd;
+		color: #277e4b;
 	}
 
+	// 返回按钮（v0.7.8.49）：UiKit 药丸按钮（外观在 UiKit.cs.scss），这里只管摆放
 	.sp-back {
 		position: absolute;
-		left: 0;
-		right: 0;
-		top: 936px;
-		font-size: 15px;
-		letter-spacing: 4px;
-		text-align: center;
-		color: rgba( 255, 255, 255, 0.45 );
-		cursor: pointer;
-		pointer-events: all;
-	}
-
-	.sp-back:hover {
-		color: rgba( 255, 255, 255, 0.9 );
+		left: 50%;
+		margin-left: -110px;   // 自己宽度 220 的一半，任意分辨率水平居中
+		top: 848px;
+		width: 220px;
+		padding-top: 8px;
 	}
 }

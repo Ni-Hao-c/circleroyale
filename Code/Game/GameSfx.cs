@@ -18,6 +18,8 @@ public static class GameSfx
 	const string SfxCombo2 = "sounds/cr_combo2.sound";
 	const string SfxCombo3 = "sounds/cr_combo3.sound";
 	const string SfxPickup = "sounds/cr_pickup.sound";
+	const string SfxUiClick = "sounds/ui_click.sound";   // dobou BUTTON_05（用户供，v0.7.8.66）
+	const string SfxUiSwipe = "sounds/ui_swipe.sound";   // dobou Tablet_Swipe_01（用户供，翻页/滚动）
 
 	static int _eatCount;   // 本局吃食物计数（每 10 分播一次音，重生清零）
 
@@ -49,6 +51,12 @@ public static class GameSfx
 
 	/// <summary> 道具入包/激活的"叮咚"（横幅出现配套音） </summary>
 	public static void Pickup() => Play( SfxPickup, Vector3.Zero );
+
+	/// <summary> UI 按钮点击（药丸按钮 / 主菜单 / 房间设置牌共用） </summary>
+	public static void UiClick() => Play( SfxUiClick, Vector3.Zero );
+
+	/// <summary> UI 翻页/滚动（玩家列表滚动容器用，ScrollSoundPanel 触发） </summary>
+	public static void UiSwipe() => Play( SfxUiSwipe, Vector3.Zero );
 
 	/// <summary> 该 owner 的事件是否归"本机耳朵"管：host 比对 SteamId；客户端比对
 	/// 本机球的 OwnerSteamId（双开合成 ID 与 Game.SteamId 对不上，只能走球上同步值） </summary>

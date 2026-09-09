@@ -95,14 +95,13 @@ public sealed class NeonCamera : Component
 					var fp = g.FocusPositionOf( best, out var fm );
 					_focus = Vector3.Lerp( _focus, fp, tp );
 					_focus.z = 0f;
-					ApplyPose();
-					UpdateTagPositions( g );
 					if ( Cam.IsValid() )
 					{
 						Cam.OrthographicHeight = MathX.Lerp( Cam.OrthographicHeight, ViewForMass( fm ),
 							1f - MathF.Exp( -ZoomSpeed * Time.Delta ) );
-						UpdateTagPositions( g );
 					}
+					ApplyPose();
+					UpdateTagPositions( g );   // 姿态与变焦都写完，本帧投影一次即可
 				}
 				else
 				{
@@ -126,17 +125,24 @@ public sealed class NeonCamera : Component
 		var t = 1f - MathF.Exp( -FollowSpeed * Time.Delta );
 		_focus = Vector3.Lerp( _focus, focusPos, t );
 		_focus.z = 0f;
-		ApplyPose();
-		UpdateTagPositions( game );
 
-		if ( !Cam.IsValid() ) return;
-		var tz = 1f - MathF.Exp( -ZoomSpeed * Time.Delta );
-		Cam.OrthographicHeight = MathX.Lerp( Cam.OrthographicHeight, ViewWithCells( cur, followMass ), tz );
-		UpdateTagPositions( game );   // 变焦也改了相机参数，重投一次保证本帧一致
+		// 变焦先写（投影用的 OrthoHeight 必须是本帧最终值），再摆位、再投影——每帧一次，
+		// 不重复调（ApplyPose 每多调一次 shake 衰减就快一倍，名牌重复投影也是白做）
+		if ( Cam.IsValid() )
+		{
+			var tz = 1f - MathF.Exp( -ZoomSpeed * Time.Delta );
+			Cam.OrthographicHeight = MathX.Lerp( Cam.OrthographicHeight, ViewWithCells( cur, followMass ), tz );
+		}
+
+		ApplyPose();
+
+		if ( Cam.IsValid() )
+			UpdateTagPositions( game );
 	}
 
 	/// <summary>
-	/// 死亡观战目标：跟全场总质量榜首。带粘滞（v0.6.3.1）——几个 bot 交替领先时
+	/// 死亡观战目标：团队赛优先跟**最大的存活队友**（v0.7.8.28 用户定稿——"我死了队伍还在打"，
+	/// 跟着大哥看战局；队友全灭才回落全场榜首）。带粘滞（v0.6.3.1）——几个目标交替领先时
 	/// 不再每次反超都切镜头，挑战者须领先 SpectateOvertakeRatio 才接管。
 	/// </summary>
 	Ball SpectateTarget()
@@ -146,13 +152,29 @@ public sealed class NeonCamera : Component
 			if ( _spectate.IsValid() )
 			{
 				_spectate = null;
+				SpectateName = null;
 				SnapTo();   // 重生：镜头瞬移回自己（不从榜首位置长距离滑过来）
 			}
 			return _target;
 		}
 
 		var game = CircleroyaleGame.Current;
-		var best = game?.TopMassBall();
+		Ball best = null;
+
+		// 团队赛队友优先（最大存活队友）；没有才看全场榜首
+		if ( MatchState.IsTeam && _target.TeamIndex >= 0 && game is not null )
+		{
+			float bestMass = -1f;
+			foreach ( var b in game.Balls )
+			{
+				if ( !b.IsValid() || !b.Alive || b == _target ) continue;
+				if ( b.TeamIndex != _target.TeamIndex ) continue;
+				var m = game.TotalMassFor( b );
+				if ( m > bestMass ) { bestMass = m; best = b; }
+			}
+		}
+		if ( !best.IsValid() )
+			best = game?.TopMassBall();
 
 		// 粘滞：当前观战对象还活着，且挑战者没领先到阈值 → 不换镜头
 		if ( _spectate.IsValid() && _spectate.Alive
@@ -163,8 +185,12 @@ public sealed class NeonCamera : Component
 		}
 
 		_spectate = best.IsValid() ? best : _target;
+		SpectateName = _spectate.IsValid() && _spectate != _target ? _spectate.PlayerName : null;
 		return _spectate;
 	}
+
+	/// <summary> 当前死亡观战目标名（本机活着=null），HUD 死亡面板提示用 </summary>
+	public string SpectateName { get; private set; }
 
 	/// <summary>
 	/// 视口高度：按"最大身体"质量取基准；有自家分身时拉远到能盖住最远的那个

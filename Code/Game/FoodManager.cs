@@ -170,7 +170,8 @@ public sealed class FoodManager
 		if ( _foods is null ) return;
 		if ( (uint)index >= (uint)_foods.Length ) return;
 
+		// 已活着（重复/乱序投递）也更新数据但不重复计数——AliveCount 只在真复燃时 +1
+		if ( !_foods[index].Alive ) AliveCount++;
 		_foods[index] = food;
-		AliveCount++;
 	}
 }

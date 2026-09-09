@@ -779,3 +779,16 @@ Log.Info( → GameLog.Info(（单一标识符 sed 替换 + grep 复核）。Warn
 
 v0.7.8.6~18 全批功能双开实测通过：分身拾取/逐身体瞄准/bot 智商/进游戏柔音/重生音
 （自己+队友）/队友出屏箭头/成就链路/设置页/泛光——目测无问题。
+
+### M6.31 等级系统 + 排行页（v0.7.8.19-M5，2026-09-08 用户需求）
+
+XP 走云端 Stats（`cr_xp`，Increment 累加）；结算经验=参与10 + 击杀×20 + 名次
+（1st 100 / 2~3rd 60 / 4~10th 25）+ 团队夺冠 50（GameAchievements.Settlement 改返回
+bool won）。**等级=本地曲线现算不落库**（150×(L-1)^1.5，改曲线零迁移）。局内他人等级：
+每端算好写进自己 Ball 的普通 [Sync] AccountLevel（owner 可写），名牌前缀 LV.x；菜单
+等级角标（.mlevel）。排行页 RankingsPanel：Leaderboards.GetFromStat("cr_xp")（单参
+重载免包 ident）全球榜，主菜单 [5]（QUIT 挪 [6]，数字键直读）。
+**踩坑：多文件连续编辑期间 compile_status 报"行号超文件长度"假错（中间态缓存）——
+括号深度检查定位真实问题（残留 } / 漏方法），别对着过期诊断改代码。**
+
+### M6.32 待办：包页面 Services > Stats 定义 cr_xp（Title/Unit=XP）

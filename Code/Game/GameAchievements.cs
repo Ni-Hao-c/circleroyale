@@ -55,6 +55,8 @@ public static class GameAchievements
 	/// combo = 本局连杀数（GameSfx 10s 窗口），massGained = 本口吞入质量 </summary>
 	public static void LocalKill( int combo, float massGained, long eatenSteamId )
 	{
+		GameXp.OnLocalKill();   // 经验记账：本局击杀（v0.7.8.19）
+
 		Unlock( FirstBlood );
 		if ( combo >= 2 ) Unlock( DoubleKill );
 		if ( combo >= 3 ) Unlock( TripleKill );
@@ -143,10 +145,11 @@ public static class GameAchievements
 			Unlock( SpikeBlast );
 	}
 
-	/// <summary> 比赛结算（全端各自判定）：团队赛=本队总质量第一（并列也算）；普通赛=个人第一名 </summary>
-	public static void Settlement( ScoreWire[] standings, long localSteamId )
+	/// <summary> 比赛结算（全端各自判定）：团队赛=本队总质量第一（并列也算）；普通赛=个人第一名。
+	/// 返回是否获胜（GameXp 结算经验用） </summary>
+	public static bool Settlement( ScoreWire[] standings, long localSteamId )
 	{
-		if ( standings is null || standings.Length == 0 ) return;
+		if ( standings is null || standings.Length == 0 ) return false;
 
 		bool won = false;
 
@@ -183,6 +186,7 @@ public static class GameAchievements
 		}
 
 		if ( won ) Unlock( FirstWin );
+		return won;
 	}
 
 	static void Unlock( string ident ) => Sandbox.Services.Achievements.Unlock( ident );

@@ -4,18 +4,22 @@ GameHud {
 	top: 0;
 	right: 0;
 	bottom: 0;
-	font-family: Inter;
-	color: white;
+	font-family: PixelFusion;
+	color: #4a3b63;   // 深梅紫主墨色（浅色世界里白字会看不见，v0.7.8.36 像素风）
 	pointer-events: none;
 
+	// 质量分数：白底描边小面板（参考图左上 SCORE 牌）
 	.mass {
 		position: absolute;
 		left: 28px;
 		top: 20px;
-		font-size: 44px;
+		font-size: 38px;
 		font-weight: 800;
-		color: #35f0ff;
-		text-shadow: 0 0 14px rgba( 53, 240, 255, 0.75 );
+		color: #4a3b63;
+		background-color: rgba( 255, 255, 255, 0.85 );
+		border: 3px solid #4a3b63;
+		border-radius: 12px;
+		padding: 2px 20px;
 	}
 
 	.hint {
@@ -24,19 +28,23 @@ GameHud {
 		bottom: 18px;
 		font-size: 14px;
 		letter-spacing: 2px;
-		color: rgba( 255, 255, 255, 0.42 );
+		color: rgba( 74, 59, 99, 0.5 );
 	}
 
+	// buff 状态：白底小牌（种类色由代码上字，浅底衬出对比）；技能按钮上方（v0.7.8.74）
 	.buff {
 		position: absolute;
 		right: 30px;
-		bottom: 72px;
-		font-size: 20px;
+		bottom: 130px;
+		font-size: 18px;
 		font-weight: 800;
 		letter-spacing: 3px;
 		text-align: right;
-		color: #35f0ff;
-		text-shadow: 0 0 12px rgba( 53, 240, 255, 0.7 );
+		color: #4a3b63;
+		background-color: rgba( 255, 255, 255, 0.85 );
+		border: 3px solid #4a3b63;
+		border-radius: 10px;
+		padding: 3px 14px;
 	}
 
 	.tips {
@@ -45,58 +53,97 @@ GameHud {
 		bottom: 44px;
 		font-size: 15px;
 		letter-spacing: 2px;
-		color: rgba( 127, 216, 255, 0.62 );
-		text-shadow: 0 0 10px rgba( 0, 0, 0, 0.85 );
+		color: rgba( 74, 59, 99, 0.62 );
 	}
 
-	.slotq {
+	// 技能按钮（v0.7.8.74 球球大作战手游风）：右下角两枚方块钮——大图标 + 冷却暗罩 +
+	// 倒数数字 + 键位角标；底图 dobo ItemSlot 九宫格。Q 主技能靠角，E 道具在其左
+	.skillq {
 		position: absolute;
 		right: 30px;
-		bottom: 48px;
-		width: 132px;
-		padding: 5px 10px;
-		font-size: 14px;
-		font-weight: 700;
-		letter-spacing: 2px;
-		text-align: right;
-		background-color: rgba( 12, 20, 34, 0.78 );
-		border-radius: 4px;
-		color: rgba( 255, 255, 255, 0.3 );
-		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.85 );
+		bottom: 36px;
+		width: 76px;
+		height: 76px;
+		border-image: url( ui/skin/skillslot.png ) 34 fill / 30px stretch;
 	}
 
-	.slote {
+	.skille {
 		position: absolute;
-		right: 30px;
-		bottom: 20px;
-		width: 132px;
-		padding: 5px 10px;
-		font-size: 14px;
-		font-weight: 700;
-		letter-spacing: 2px;
-		text-align: right;
-		background-color: rgba( 12, 20, 34, 0.78 );
-		border-radius: 4px;
-		color: rgba( 255, 255, 255, 0.3 );
-		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.85 );
+		right: 118px;
+		bottom: 36px;
+		width: 76px;
+		height: 76px;
+		border-image: url( ui/skin/skillslot.png ) 34 fill / 30px stretch;
 	}
 
+	.skill-icon {
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		margin-left: -24px;   // Length center 不可靠：50% + 半宽负 margin 定中（实测坑）
+		margin-top: -24px;
+		width: 48px;
+		height: 48px;
+	}
+
+	// 冷却暗罩：挂 HUD 根面板（嵌按钮里定位会乱，v0.7.8.76），Right 代码按按钮右距写；
+	// 贴按钮内缘（bottom 41 = 按钮 36 + 内边 5），高度代码驱动——底边固定上缘下沉排空
+	.skill-cd {
+		position: absolute;
+		bottom: 41px;
+		width: 66px;
+		height: 66px;
+		background-color: rgba( 22, 13, 34, 0.68 );
+		border-radius: 16px;
+	}
+
+	// 充能倒数秒（居中大字，压在 Q 钮正中）。Label 纵向位置由 align-items 决定，不写默认贴底
+	.skill-num {
+		position: absolute;
+		bottom: 41px;
+		width: 66px;
+		height: 66px;
+		font-size: 26px;
+		font-weight: 800;
+		text-align: center;
+		align-items: center;
+		color: #fffbe8;
+		text-shadow: 0 2px 0 #4a3b63;
+	}
+
+	// 键位角标：按钮右下角（Right 代码写）。align-items:flex-end 把字压到盒底
+	.skill-key {
+		position: absolute;
+		bottom: 41px;
+		width: 40px;
+		height: 20px;
+		font-size: 13px;
+		font-weight: 700;
+		letter-spacing: 1px;
+		text-align: right;
+		align-items: flex-end;
+		color: rgba( 255, 251, 232, 0.92 );
+		text-shadow: 0 2px 0 #4a3b63;
+	}
+
+	// 高光横幅：奶白字 + 梅紫硬错位阴影（像素游戏立体字），连杀金字同款加码
 	.banner {
 		position: absolute;
 		left: 0;
 		right: 0;
-		font-family: Inter;
+		font-family: PixelFusion;
 		font-size: 38px;
 		font-weight: 800;
 		letter-spacing: 8px;
 		text-align: center;
-		text-shadow: 0 0 18px rgba( 0, 0, 0, 0.9 ), 0 0 30px rgba( 0, 0, 0, 0.6 ), 0 3px 0 rgba( 0, 0, 0, 0.55 );
+		color: #fffbe8;
+		text-shadow: 0 3px 0 #4a3b63, 0 6px 0 rgba( 74, 59, 99, 0.45 );
 	}
 
 	.banner.combo {
 		font-size: 46px;
 		letter-spacing: 12px;
-		text-shadow: 0 0 24px rgba( 255, 207, 92, 0.75 ), 0 0 44px rgba( 255, 160, 40, 0.4 ), 0 4px 0 rgba( 0, 0, 0, 0.6 );
+		text-shadow: 0 4px 0 #4a3b63, 0 8px 0 rgba( 74, 59, 99, 0.5 );
 	}
 
 	.version {
@@ -105,28 +152,43 @@ GameHud {
 		top: 4px;
 		font-size: 11px;
 		letter-spacing: 2px;
-		color: rgba( 255, 255, 255, 0.35 );
+		color: rgba( 74, 59, 99, 0.4 );
 	}
 
+	// 排行榜行：白色半透明小药片（浅色世界上可读）
 	.row {
-		font-family: SimHei;
+		font-family: PixelFusion;
 		font-size: 14px;
 		letter-spacing: 1px;
 		text-align: right;
-		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.9 );
+		color: #4a3b63;
+		background-color: rgba( 255, 255, 255, 0.72 );
+		border-radius: 6px;
+		padding: 1px 8px;
 	}
 
 	.row.self {
 		font-weight: 700;
-		color: #35f0ff;
+		color: #e5488d;
 	}
 
+	// 名牌：纯文字（白底小片已去掉，v0.7.8.77 用户定稿），深梅紫在浅色战场上一眼可读
 	.nametag {
-		font-family: SimHei;
+		font-family: PixelFusion;
 		font-size: 13px;
 		text-align: center;
-		color: rgba( 255, 255, 255, 0.88 );
-		text-shadow: 0 0 6px rgba( 0, 0, 0, 0.95 );
+		color: #4a3b63;
+		text-shadow: 0 1px 0 rgba( 255, 255, 255, 0.8 );
+	}
+
+	// 死亡全屏遮罩：黑 45% 透明压暗战场，死亡期间显示、复活即隐（显隐由代码驱动）
+	.death-shade {
+		position: absolute;
+		left: 0;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		background-color: rgba( 0, 0, 0, 0.45 );
 	}
 
 	.death-title {
@@ -138,8 +200,8 @@ GameHud {
 		font-weight: 800;
 		text-align: center;
 		letter-spacing: 8px;
-		color: #ff4d6d;
-		text-shadow: 0 0 24px rgba( 255, 77, 109, 0.8 );
+		color: #e5484d;
+		text-shadow: 0 4px 0 #4a3b63;
 	}
 
 	.death-sub {
@@ -151,9 +213,37 @@ GameHud {
 		font-size: 16px;
 		text-align: center;
 		letter-spacing: 4px;
-		color: rgba( 255, 255, 255, 0.6 );
+		color: rgba( 74, 59, 99, 0.75 );
 		pointer-events: all;   // 根面板 none，按钮区单独放开：点击重生（键盘失焦时的兜底通道）
 		cursor: pointer;
+	}
+
+	// 领土模式复活二选一（M7.2）：糖果药丸双按钮（BASE 白 / FRONT 黄，与大厅 START/JOIN 同语言）
+	.death-btn {
+		position: absolute;
+		left: 50%;
+		width: 460px;
+		height: 74px;
+		margin-left: -230px;
+		border-radius: 37px;
+		background: #ffffff;
+		border: 4px solid #4a3b63;
+		font-size: 26px;
+		font-weight: 700;
+		letter-spacing: 6px;
+		text-align: center;
+		color: #4a3b63;
+		pointer-events: all;
+		cursor: pointer;
+	}
+
+	.death-btn-base {
+		top: 600px;
+	}
+
+	.death-btn-front {
+		top: 692px;
+		background: #ffe9a8;
 	}
 
 	// ---- 比赛规则 UI（M5）：队伍条在上（52px），模式+倒计时在其下（84px，用户定稿）----
@@ -167,17 +257,20 @@ GameHud {
 		font-weight: 700;
 		letter-spacing: 4px;
 		text-align: center;
-		text-shadow: 0 0 12px rgba( 0, 0, 0, 0.9 );
+		color: #4a3b63;
 	}
 
 	.teamscore {
 		top: 52px;   // 位置不动（用户定稿）：队伍条在上，模式+倒计时移到它下面
 		width: 170px;
 		font-size: 15px;
-		font-family: SimHei;
+		font-family: PixelFusion;
 		letter-spacing: 1px;
 		text-align: center;
-		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.9 );
+		color: #4a3b63;
+		background-color: rgba( 255, 255, 255, 0.72 );
+		border-radius: 6px;
+		padding: 1px 4px;
 	}
 
 	// ---- 击杀播报（M5"谁吃了谁"，左上分数下方）----
@@ -185,19 +278,83 @@ GameHud {
 	.killfeed {
 		width: 480px;
 		font-size: 15px;
-		font-family: SimHei;
+		font-family: PixelFusion;
 		letter-spacing: 1px;
-		color: rgba( 255, 255, 255, 0.68 );
-		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.95 );
+		color: rgba( 74, 59, 99, 0.78 );
+		background-color: rgba( 255, 255, 255, 0.7 );
+		border-radius: 6px;
+		padding: 1px 8px;
 	}
 
 	.killfeed.good {
-		color: #ffcf5c;
+		color: #2e9e4f;
 		font-weight: 700;
 	}
 
 	.killfeed.bad {
-		color: #ff4d6d;
+		color: #e5484d;
 		font-weight: 700;
+	}
+
+	// 领土情境引导（M7.3）：底部居中白底小牌，比轮播 tips 更醒目
+	.thint {
+		position: absolute;
+		left: 50%;
+		bottom: 130px;
+		width: 920px;
+		margin-left: -460px;
+		font-size: 20px;
+		font-weight: 700;
+		letter-spacing: 2px;
+		text-align: center;
+		color: #4a3b63;
+		background-color: rgba( 255, 255, 255, 0.92 );
+		border: 3px solid #4a3b63;
+		border-radius: 12px;
+		padding: 8px 12px;
+	}
+
+	// 领土小地图（M7.3）：右上角（版本号下方），右缘锚定（用户窗口逻辑宽≈1800，写死 left 会顶出）
+	.tmap {
+		position: absolute;
+		right: 28px;
+		top: 24px;
+		width: 292px;
+		height: 292px;
+		background-color: rgba( 234, 244, 252, 0.9 );
+		border: 3px solid #4a3b63;
+		border-radius: 10px;
+	}
+
+	.tmap-cell {
+		position: absolute;
+		border: 1px solid rgba( 74, 59, 99, 0.35 );
+		border-radius: 5px;
+		overflow: hidden;
+	}
+
+	.tmap-bar {
+		position: absolute;
+		left: 0;
+		bottom: 0;
+		height: 7px;
+		background-color: rgba( 74, 59, 99, 0.75 );
+	}
+
+	.tmap-self {
+		position: absolute;
+		width: 16px;
+		height: 16px;
+		border-radius: 8px;
+		background-color: #ffffff;
+		border: 3px solid #4a3b63;
+	}
+
+	.tmap-mate {
+		position: absolute;
+		width: 12px;
+		height: 12px;
+		border-radius: 6px;
+		border: 2px solid rgba( 74, 59, 99, 0.7 );
 	}
 }

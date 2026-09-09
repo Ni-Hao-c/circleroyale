@@ -31,3 +31,6 @@ Exports/
 # ---- MCP 调试缓存（截图/场景 dump）----
 .mcp/
 .menu_check.png
+
+# Raw working material: re-downloadable font pack archive (35MB, keep local only)
+_raw_pixel/fusion-pixel.zip

@@ -4,87 +4,158 @@ MainMenu {
 	top: 0;
 	right: 0;
 	bottom: 0;
-	font-family: Inter;
-	color: white;
+	font-family: PixelFusion;
+	color: #4a3b63;
 	pointer-events: all;   // ⚠️ 只认 auto/none/all：写 normal 非法被忽略（面板默认 None=鼠标全死）
 
-	.title {
+	// 官方项目手法：flex 列 + align-items 居中（任意分辨率水平居中）。
+	// ⚠️ s&box 默认 flex-direction 是 row——不显式写 column 的话子元素全部横排（实测）
+	flex-direction: column;
+	align-items: center;
+
+	// ---- 左上：玩家资料卡（头像 / 名字 / 等级） ----
+	.profile {
 		position: absolute;
-		left: 0;
-		right: 0;
-		top: 170px;
-		font-size: 84px;
-		font-weight: 800;
-		letter-spacing: 12px;
-		color: #35f0ff;
-		text-shadow: 0 0 34px rgba( 53, 240, 255, 0.85 );
-		text-align: center;
+		left: 20px;
+		top: 16px;
 	}
 
-	.subtitle {
-		position: absolute;
-		left: 0;
-		right: 0;
-		top: 286px;
-		font-size: 15px;
-		letter-spacing: 6px;
-		color: rgba( 255, 255, 255, 0.4 );
-		text-align: center;
+	.profile-avatar {
+		width: 72px;
+		height: 72px;
+		border: 3px solid #4a3b63;
+		border-radius: 12px;
+		background-color: rgba( 255, 255, 255, 0.75 );
 	}
 
-	.btn {
+	.profile-info {
 		position: absolute;
-		left: 0;
-		right: 0;
-		font-size: 26px;
-		font-weight: 600;
-		letter-spacing: 4px;
-		color: rgba( 255, 255, 255, 0.85 );
-		text-align: center;
+		left: 84px;
+		top: 0;
+		bottom: 0;
+		flex-direction: column;   // ⚠️ 默认 row：名字和等级会挤成一行
+		justify-content: center;   // 垂直居中于头像高度
+	}
+
+	.profile-name {
+		font-size: 20px;
+		font-weight: 100;
+		letter-spacing: 1px;
+		color: #4a3b63;
+		text-shadow: 0 2px 0 rgba( 255, 255, 255, 0.9 );
+	}
+
+	.profile-level {
+		margin-top: 6px;
+		font-size: 12px;
+		font-weight: 700;
+		letter-spacing: 2px;
+		color: #d98a00;
+	}
+
+	// ---- 右上：设置 / 排行榜（图标小按钮，横排） ----
+	.top-actions {
+		position: absolute;
+		right: 40px;
+		top: 40px;
+		flex-direction: row;
+	}
+
+	.icon-btn {
+		width: 100px;
+		align-items: center;      // 图标水平居中
+		justify-content: center;  // 图标垂直居中
+		height: 100px;
+		margin-left: 24px;   // 两颗按钮拉开间距，别糊成一团
+		border-image: url( ui/skin/slot.png ) 30 fill / 10px stretch;
 		cursor: pointer;
 		pointer-events: all;
-		text-shadow: 0 0 12px rgba( 53, 240, 255, 0.3 );
 	}
 
-	.btn.host { top: 380px; }
-	.btn.join { top: 442px; }
-	.btn.bots { top: 504px; }
-	.btn.settings { top: 566px; }
-	.btn.quit { top: 628px; color: rgba( 255, 255, 255, 0.4 ); }
-
-	.btn:hover {
-		color: #35f0ff;
-		text-shadow: 0 0 20px rgba( 53, 240, 255, 0.9 );
+	.icon-btn:hover {
+		border-image-tint: #ffd6e8;
 	}
 
+	.icon-btn-img {
+		// ⚠️ 别写 position/left/top——.icon-btn 没有 position 时百分比解析到 .top-actions 容器，
+		// 两颗图标会叠到容器正中。居中由 .icon-btn 的 align/justify-center 完成，这里只管尺寸
+		width: 50px;
+		height: 50px;
+	}
+
+	// ---- 中央大 logo ----
+	.title {
+		width: 100%;
+		margin-top: 150px;
+		font-size: 196px;
+		font-weight: 800;
+		letter-spacing: 8px;
+		color: #f272a7;   // 糖果粉 logo
+		text-shadow: 0 6px 0 #4a3b63, 0 11px 0 rgba( 74, 59, 99, 0.35 );
+		text-align: center;
+	}
+
+	// 副标题已按需求移除（v0.7.8.44）
+
+	// ---- 三个主按钮横排（参考手游布局；粉 / 蓝 / 橙） ----
+	.menu-row {
+		margin-top: 400px;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.menu-row .btn {
+		width: 250px;
+		height: 64px;
+		margin-top: 10px;
+		margin-left: 30px;
+		font-size: 25px;
+		font-weight: 300;
+		letter-spacing: 5px;
+		color: #4a3b63;
+		padding-top: 8px;
+		text-align: center;
+		border-image: url( ui/skin/btn_white.png ) 52 fill / 26px stretch;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.menu-row .btn.host { margin-left: 0; border-image-tint: #ffb9d0; }   // 粉=建服
+	.menu-row .btn.join { border-image-tint: #b8d9ff; }                   // 蓝=加入
+	.menu-row .btn.bots { border-image-tint: #ffcf9e; }                   // 橙=人机
+
+	.menu-row .btn:hover {
+		border-image-tint: #ffffff;
+		color: #e5487e;
+	}
+
+	// ---- 角落固定件 ----
 	.status {
 		position: absolute;
 		left: 0;
 		right: 0;
-		top: 634px;
-		font-size: 14px;
+		bottom: 52px;
+		font-size: 120px;
 		letter-spacing: 2px;
-		color: #ffb63b;
+		color: #d98a00;
 		text-align: center;
 	}
 
-	// 比赛参数设置已移入游戏房间（LobbyPanel，M5 二级界面）
-
 	.version {
 		position: absolute;
-		right: 28px;
-		top: 8px;
-		font-size: 11px;
+		right: 20px;
+		bottom: 14px;
+		font-size: 12px;
 		letter-spacing: 2px;
-		color: rgba( 255, 255, 255, 0.35 );
+		color: rgba( 74, 59, 99, 0.4 );
 	}
 
 	.hint {
 		position: absolute;
 		left: 30px;
-		bottom: 18px;
-		font-size: 14px;
+		bottom: 14px;
+		font-size: 12px;
 		letter-spacing: 2px;
-		color: rgba( 255, 255, 255, 0.42 );
+		color: rgba( 74, 59, 99, 0.5 );
 	}
 }

@@ -4,109 +4,109 @@ RoomBrowser {
 	top: 0;
 	right: 0;
 	bottom: 0;
-	font-family: SimHei;
-	color: white;
+	font-family: PixelFusion;
+	color: #4a3b63;
 	pointer-events: all;
+	background-color: rgba( 234, 244, 252, 0.88 );   // 浅蓝磨砂（像素风）
 
+	// 以下与排行页（RankingsPanel.cs.scss）同款版式：大粉标题 / note 行牌 / 金色状态条 / 绿药丸按钮
 	.rb-title {
 		position: absolute;
 		left: 0;
 		right: 0;
-		top: 88px;
-		font-size: 48px;
+		top: 80px;
+		font-size: 100px;
 		font-weight: 800;
 		letter-spacing: 10px;
 		text-align: center;
-		color: #35f0ff;
-		text-shadow: 0 0 26px rgba( 53, 240, 255, 0.85 );
+		color: #f272a7;
+		text-shadow: 0 4px 0 #4a3b63;
 	}
 
 	.rb-status {
 		position: absolute;
 		left: 0;
 		right: 0;
-		top: 168px;
-		font-size: 15px;
-		letter-spacing: 3px;
+		top: 460px;   // 空卡正中：找房间中/无房间/失败提示（行牌之后创建，压在空牌上层）
+		font-size: 32px;
+		font-weight: 700;
+		letter-spacing: 4px;
 		text-align: center;
-		color: #ffb63b;
+		color: #d98a00;
+		text-shadow: 0 3px 0 rgba( 74, 59, 99, 0.25 );
 	}
 
 	.rb-head {
 		position: absolute;
-		left: 460px;
-		width: 1000px;
-		top: 258px;
+		left: 50%;
+		margin-left: -550px;
+		width: 1100px;
+		top: 250px;
 		font-size: 12px;
 		letter-spacing: 3px;
 		text-align: left;
-		color: rgba( 255, 255, 255, 0.32 );
+		color: rgba( 74, 59, 99, 0.45 );
+	}
+
+	// 房间列表滚动容器（原生网页式滚动 + 流式绑定：滚近底部才绑下一批行牌）
+	.rb-list {
+		position: absolute;
+		left: 50%;
+		margin-left: -800px;
+		width: 1600px;
+		top: 280px;
+		height: 640px;   // ★ 列表视口高度（精修改这里；底到按钮排上方为止）
+		flex-direction: column;   // ⚠️ s&box 默认 row，不加就是横排
+		overflow-y: scroll;
+		scrollbar-width: 10px;   // ★ 滚动条粗细
+		scrollbar-color: rgba( 74, 59, 99, 0.45 ) transparent;
+		pointer-events: all;   // 面板默认 None：不打开收不到滚轮
 	}
 
 	.rb-row {
-		position: absolute;
-		font-size: 19px;
+		flex-shrink: 0;   // 不许压缩：压了就不溢出、滚动条永远出不来
+		margin: 0 0 6px 0;   // ★ 行距
+		font-size: 40px;
 		letter-spacing: 1px;
 		text-align: left;
-		text-shadow: 0 0 8px rgba( 0, 0, 0, 0.9 );
+		color: #4a3b63;
+		border-image: url( ui/skin/note.png ) 50 fill / 5px stretch;
+		padding: 30px 160px;   // ★ 行内文字与牌边缘的距离（精修改这里）
 		cursor: pointer;
 		pointer-events: all;
 	}
 
 	.rb-row:hover {
-		color: #35f0ff;
+		color: #e5487e;
+		border-image-tint: #ffe4f0;
 	}
 
+	// 下面三个是 UiKit 药丸（外观在 Assets/ui/cruikit.scss 的 .cr-pill），这里只管摆放。
+	// 横排一行（用户定稿）：以中线为 0 向两侧排，间距 40px
 	.rb-refresh {
 		position: absolute;
-		left: 0;
-		right: 0;
-		top: 742px;
-		font-size: 20px;
-		font-weight: 700;
-		letter-spacing: 5px;
-		text-align: center;
-		color: #9ad8ff;
-		cursor: pointer;
-		pointer-events: all;
-		text-shadow: 0 0 14px rgba( 0, 0, 0, 0.7 );
-	}
-
-	.rb-refresh:hover {
-		color: #ffffff;
+		left: 50%;
+		margin-left: -410px;   // 宽 260，左起
+		top: 950px;
+		width: 260px;
+		padding-top: 8px;
 	}
 
 	.rb-local {
 		position: absolute;
-		left: 0;
-		right: 0;
-		top: 806px;
-		font-size: 16px;
-		letter-spacing: 4px;
-		text-align: center;
-		color: #ffcf5c;
-		cursor: pointer;
-		pointer-events: all;
-	}
-
-	.rb-local:hover {
-		color: #ffffff;
+		left: 50%;
+		margin-left: -110px;   // 宽 260，中間
+		top: 950px;
+		width: 260px;
+		padding-top: 8px;
 	}
 
 	.rb-back {
 		position: absolute;
-		left: 0;
-		right: 0;
-		top: 936px;
-		font-size: 15px;
-		letter-spacing: 4px;
-		text-align: center;
-		color: rgba( 255, 255, 255, 0.45 );
-		cursor: pointer;
-		pointer-events: all;
-	}
-
-	.rb-back:hover {
-		color: rgba( 255, 255, 255, 0.9 );
+		left: 50%;
+		margin-left: 190px;   // 宽 220，右起
+		top: 950px;
+		width: 220px;
+		padding-top: 8px;
 	}
 }

@@ -66,6 +66,12 @@ public sealed class PowerUpManager
 	/// 大球喂到一半会被小球几口抢走（虎口夺食，v0.7.4.0 用户定稿） </summary>
 	float[] _feedScores = Array.Empty<float>();
 
+	/// <summary> Q 技能充能计时（按 SteamId，仅 host；v0.7.8.30 Q 改随时间充能，E 仍拾取） </summary>
+	readonly Dictionary<long, TimeSince> _qCharge = new();
+
+	/// <summary> Q 槽当前持有技能的球（冷却暂停标记，检测"放走"的转变） </summary>
+	readonly HashSet<long> _qHeld = new();
+
 	/// <summary> 全部槽位（NeonRenderer 每帧读，各端内容一致） </summary>
 	public IReadOnlyList<Slot> Slots => _slots;
 
@@ -111,11 +117,14 @@ public sealed class PowerUpManager
 		}
 
 		// 分身拾取（v0.7.8.6）：捡到存主人背包（同一 Q/E 背包）；孢子不捡（中性食物团），
-		// 尖刺分身不捡（武器不兼职取货）。主人死亡的分身下一帧 TickCells 才清，这里顺带过滤
+		// 尖刺分身不捡（武器不兼职取货）。主人死亡的分身下一帧 TickCells 才清，这里顺带过滤。
+		// ⚠️ 倒序 for：bot 拿着（20s 后转正的）尖刺分身踩到尖刺道具 → 拾取即用 →
+		// SpawnSpikeMinion 往 _cells 追加——foreach 枚举中改集合会炸（v0.7.8.20 修）
 		if ( cells is not null )
 		{
-			foreach ( var c in cells )
+			for ( int i = cells.Count - 1; i >= 0; i-- )
 			{
+				var c = cells[i];
 				if ( c.PieceKind != CellPiece.Kind.SplitPiece ) continue;
 				if ( !c.OwnerBall.IsValid() || !c.OwnerBall.Alive ) continue;
 				PickupPass( c.OwnerBall, c.Pos, c.Radius );
@@ -133,6 +142,50 @@ public sealed class PowerUpManager
 			s.Pos = RandomPos();
 			if ( i < _feedScores.Length ) _feedScores[i] = 0f;   // 重刷积分清零（培养进度不作数）
 			if ( Networking.IsActive ) NetworkManager.PowerUpRespawned( i, s.Kind, s.Pos.x, s.Pos.y );
+		}
+
+		// Q 技能随时间充能（v0.7.8.30 用户定稿）：真人球 Q 槽空时按**当前质量**计时充能
+		// （15~60s，越轻越快），到点自动发一个随机技能。bot 拾取即用无背包，不参与；
+		// 持有未放时冷却暂停（技能躺在槽里等按键）。计时按 SteamId 记（跨热重载稳定）。
+		// 领土模式（M7.4）：Q 键让给职业技能——充能 pass 冻结清零，PowerA 保持空槽
+		if ( MatchState.IsTerritory )
+		{
+			_qCharge.Clear();
+			_qHeld.Clear();
+			return;
+		}
+		foreach ( var b in balls )
+		{
+			if ( !b.IsValid() || !b.Alive || b.IsBot ) continue;
+
+			var sid = b.OwnerSteamId;
+			if ( b.PowerA != None )
+			{
+				_qHeld.Add( sid );   // 技能待放：冷却暂停
+				continue;
+			}
+			if ( _qHeld.Remove( sid ) )
+			{
+				_qCharge[sid] = 0;   // 刚放走/复活清空：冷却从现在起算
+				continue;
+			}
+			if ( !_qCharge.TryGetValue( sid, out var ts ) )
+			{
+				_qCharge[sid] = 0;   // 首见（入局）
+				continue;
+			}
+			if ( ts < GameConfig.QSkillCooldownFor( b.Mass ) ) continue;
+
+			_qCharge[sid] = 0;
+			b.PowerA = RandomKind();
+			if ( GameSfx.IsMine( b.OwnerSteamId ) )
+			{
+				GameSfx.Pickup();
+				CircleroyaleGame.Current?.Hud?.AddBanner( $"{NameOf( b.PowerA )} READY (Q)", ColorOf( b.PowerA ) );
+			}
+			// 客户端玩家的 Q 到点：横幅+音效走广播（mode2），host 回声由 OnPowerBannerRemote 的 IsAuthority 挡掉（v0.7.8.31）
+			if ( Networking.IsActive ) NetworkManager.PowerBanner( b.PowerA, b.OwnerSteamId, 2 );
+			GameLog.Info( $"[game] q skill granted: {NameOf( b.PowerA )} -> {b.PlayerName}" );
 		}
 	}
 
